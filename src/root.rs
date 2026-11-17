@@ -19,7 +19,7 @@ use crate::assets::CustomIconName;
 #[cfg(not(target_family = "wasm"))]
 use crate::connection::servers_toml_redacted;
 use crate::connection::{DangerKind, clear_expired_cache, get_server, get_servers};
-use crate::constants::{EDITOR_KEY_BAR_HEIGHT, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_WIDTH};
+use crate::constants::EDITOR_KEY_BAR_HEIGHT;
 use crate::db::{TRASH_RETENTION_MS, purge_all_trash};
 use crate::dialogs::*;
 #[cfg(not(target_family = "wasm"))]
@@ -52,10 +52,11 @@ use crate::states::{
 #[cfg(not(target_family = "wasm"))]
 use crate::states::{WindowPlacement, save_app_state};
 use crate::views::{
-    ExportSource, ZedisCommandPalette, ZedisContent, ZedisMultiSearch, ZedisRecentKeysPalette, ZedisShortcutsOverlay,
-    ZedisSidebar, ZedisTitleBar, confirm_dangerous_command, confirm_remove_server, open_account, open_compare,
-    open_connection_diagnostics, open_features_dialog, open_key_export, open_key_import, open_new_group_dialog,
-    open_settings, open_trash_dialog, open_troubleshoot_report,
+    DatabaseWorkspaceSelected, ExportSource, ZedisCommandPalette, ZedisContent, ZedisMultiSearch,
+    ZedisRecentKeysPalette, ZedisShortcutsOverlay, ZedisSidebar, ZedisTitleBar, confirm_dangerous_command,
+    confirm_remove_server, open_account, open_compare, open_connection_diagnostics, open_features_dialog,
+    open_key_export, open_key_import, open_new_group_dialog, open_settings, open_trash_dialog,
+    open_troubleshoot_report,
 };
 use crate::window_setup::*;
 use gpui::{
@@ -82,10 +83,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
+mod database_navigation;
 /// The desktop-only half of the root — see the module for why it is one.
 #[cfg(not(target_family = "wasm"))]
 mod desktop;
 mod handlers;
+mod sidebar_pane;
 mod tabs;
 
 #[cfg(not(target_family = "wasm"))]
@@ -109,6 +112,7 @@ pub struct Zedis {
     /// A cmd+click "open in new tab" request awaiting `render` (which has the
     /// `Window` needed to build a `ZedisContent`).
     pending_new_tab: Option<(String, usize)>,
+    pending_database: Option<(String, usize)>,
     command_palette: Entity<ZedisCommandPalette>,
     recent_keys_palette: Entity<ZedisRecentKeysPalette>,
     /// The multi-database search palette (⌘⇧F).
@@ -200,6 +204,11 @@ impl Zedis {
             handlers::on_global_event(this, event, cx)
         })
         .detach();
+        cx.subscribe(&sidebar, |this, _, event: &DatabaseWorkspaceSelected, cx| {
+            this.activate_database_workspace(event.content.clone(), event.view, cx);
+        })
+        .detach();
+        cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
         cx.observe_window_appearance(window, |this, _window, cx| handlers::on_window_appearance(this, cx))
             .detach();
         let clear_expired_cache = Some(start_housekeeping(cx));
@@ -211,6 +220,7 @@ impl Zedis {
             active_tab,
             tab_scroll: ScrollHandle::new(),
             pending_new_tab: None,
+            pending_database: None,
             command_palette,
             recent_keys_palette,
             multi_search,
@@ -528,14 +538,6 @@ impl Render for Zedis {
         let route = cx.global::<ZedisGlobalStore>().read(cx).route();
         let show_status_bar = route.is_server();
         let status_bar = self.active_content().read(cx).status_bar();
-        // Sidebar collapses to a narrow icon-only rail; the toggle saves state +
-        // refreshes windows, so this re-reads the width on the next render.
-        let sidebar_width = if cx.global::<ZedisGlobalStore>().read(cx).sidebar_collapsed() {
-            SIDEBAR_COLLAPSED_WIDTH
-        } else {
-            SIDEBAR_WIDTH
-        };
-
         let content = v_flex()
             .id(PKG_NAME)
             // No font_family here: gpui-component's `Root` (which wraps this
@@ -554,7 +556,7 @@ impl Render for Zedis {
                     .min_h_0()
                     .w_full()
                     .bg(cx.theme().background)
-                    .child(div().w(sidebar_width).flex_none().h_full().child(self.sidebar.clone()))
+                    .child(self.sidebar_pane(window, cx))
                     // Content column: tab strip on top, then the content itself,
                     // then the status bar. All three are bounded by the column, so
                     // they line up with each other and leave the sidebar its own
@@ -606,6 +608,7 @@ impl Zedis {
     /// configuration), the prompts and the welcome card, the font size,
     /// and a tab asked for — which needs the `Window` to be built.
     fn prepare_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.prepare_database_workspace(window, cx);
         let current_bounds = window.bounds();
         if current_bounds != self.last_bounds {
             // The display the window is currently on, used to anchor the saved

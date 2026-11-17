@@ -406,6 +406,7 @@ pub(super) fn on_global_event(this: &mut Zedis, event: &GlobalEvent, cx: &mut Co
             this.pending_notification = Some(notification);
         }
         GlobalEvent::ServerSelected(server_id, db) => {
+            this.follow_database_selection(server_id, *db, cx);
             // Track the active tab's connection identity. Deliberately
             // no "jump to an existing tab" here: the contents'
             // subscriptions run before this one, so by the time this

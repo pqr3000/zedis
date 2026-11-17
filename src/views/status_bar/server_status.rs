@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The bar's left side: the server's context — its tag, the node counts
-//! and their tooltip, the database, read-only, the Tools menu and the key
+//! and their tooltip, read-only, the Tools menu and the key
 //! count.
 
 use super::*;
@@ -140,24 +140,6 @@ pub(super) fn format_nodes_description(
 }
 
 impl ZedisStatusBar {
-    /// DB-dropdown menu width, hugging the current content: the default
-    /// (`Length::Auto`) follows the narrow "DB N ▾" trigger and clips the
-    /// key counts, while any fixed width leaves blank space when counts
-    /// are small or absent. Sized from the widest count in the current
-    /// snapshot instead.
-    fn db_menu_width(&self, window: &Window) -> Pixels {
-        // px_2 row padding (1.0 rem) + label column + gap to the check icon
-        // (0.25 rem) + xsmall check icon (~1.0 rem) + rounding slack (0.25 rem).
-        let mut width_rems = 1.0 + DB_LABEL_COL_REMS + 0.25 + 1.0 + 0.25;
-        let max_keys = self.db_key_counts.iter().copied().max().unwrap_or(0);
-        if max_keys > 0 {
-            // gap_3 (0.75 rem) + the widest grouped count at the mono advance.
-            width_rems += 0.75 + group_thousands(max_keys).len() as f32 * DB_MENU_CHAR_REMS;
-        }
-        rems(width_rems).to_pixels(window.rem_size())
-    }
-
-    /// Render the server status.
     pub(super) fn render_server_status(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let nodes_unit = self
             .shows_units(window, cx)
@@ -237,36 +219,6 @@ impl ZedisStatusBar {
                                 });
                             })),
                     )
-                    .when(self.databases > 1, |this| {
-                        // `appearance(false)`: drop the bordered input chrome so it
-                        // reads as plain "DB N ▾" text that inherits the muted
-                        // status-bar color (matches the design), not a bright box.
-                        // The tooltip names what the per-row numbers are — the
-                        // dropdown shows bare counts with no unit, and on a
-                        // multi-master setup they are sums across nodes.
-                        let db_tooltip = i18n_status_bar(cx, "db_tooltip");
-                        let menu_open = self.db_menu_open;
-                        this.child(
-                            div()
-                                .id("zedis-status-bar-db-select")
-                                .when(!menu_open, |this| {
-                                    this.tooltip(move |window, cx| Tooltip::new(db_tooltip.clone()).build(window, cx))
-                                })
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, _window, cx| {
-                                        this.db_menu_open = true;
-                                        cx.notify();
-                                    }),
-                                )
-                                .child(
-                                    Select::new(&self.db_state)
-                                        .small()
-                                        .appearance(false)
-                                        .menu_width(self.db_menu_width(window)),
-                                ),
-                        )
-                    })
                     // Clients paused — by this app (remembered), or by anyone
                     // where the server says so (Valkey 8.1+): the state in
                     // which every write hangs and nothing else on screen

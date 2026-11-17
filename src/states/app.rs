@@ -21,13 +21,10 @@ use crate::connection::{
     DEFAULT_KEY_SCAN_COUNT, MAX_KEY_SCAN_COUNT, MIN_KEY_SCAN_COUNT, RedisServer, ReplyFormat, get_server, get_servers,
     save_servers,
 };
-use crate::constants::{SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_WIDTH};
 use crate::error::Error;
 #[cfg(not(target_family = "wasm"))]
 use crate::helpers::set_configured_proxy;
-use crate::helpers::{
-    ConfigRecovery, DEFAULT_UI_FONT_SIZE, UpdateInfo, get_key_tree_widths, load_config_with_recovery,
-};
+use crate::helpers::{ConfigRecovery, DEFAULT_UI_FONT_SIZE, UpdateInfo, load_config_with_recovery};
 use crate::helpers::{DEFAULT_DATE_FORMAT, TimeZonePref};
 use crate::startup::is_nightly_build;
 use crate::states::i18n_common;
@@ -48,6 +45,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 // The route types, persistence helpers, update/hint state, and server-list
 // operations are their own files; all remain under `states::app` to callers.
+mod layout;
 mod persistence;
 mod route;
 mod servers;
@@ -381,6 +379,10 @@ pub struct ZedisAppState {
     #[serde(default)]
     window_placements: Vec<WindowPlacement>,
     key_tree_width: Pixels,
+    /// The combined connection and database tree has its own divider. Duplicate
+    /// workspaces can also have an inner key tree with its own saved width.
+    #[serde(default)]
+    sidebar_width: Option<Pixels>,
     /// Persisted width of the kv-table entry panel — the right-hand
     /// preview/edit pane in the collection editors (Hash/List/Set/ZSet/
     /// Stream), user-resizable via the split handle. Global: a display
@@ -659,22 +661,6 @@ impl ZedisAppState {
     }
     pub fn key_tree_width(&self) -> Pixels {
         self.key_tree_width
-    }
-    pub fn content_width(&self) -> Option<Pixels> {
-        let bounds = self.bounds?;
-        let width = bounds.size.width.as_f32();
-        let (key_tree_width, _, _) = get_key_tree_widths(self.key_tree_width);
-        Some((width - self.sidebar_px().as_f32() - key_tree_width.as_f32()).into())
-    }
-    /// The sidebar's *current* width — the icon rail is far narrower than the
-    /// expanded panel, so anything sizing itself against the sidebar has to ask
-    /// rather than assume [`SIDEBAR_WIDTH`].
-    pub fn sidebar_px(&self) -> Pixels {
-        if self.sidebar_collapsed() {
-            SIDEBAR_COLLAPSED_WIDTH
-        } else {
-            SIDEBAR_WIDTH
-        }
     }
     pub fn set_key_tree_width(&mut self, width: Pixels) {
         self.key_tree_width = width;

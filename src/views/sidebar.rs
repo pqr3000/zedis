@@ -29,8 +29,8 @@ use crate::{
     },
 };
 use gpui::{
-    AnyElement, App, ClickEvent, Context, ElementId, FontWeight, Hsla, Image, ImageFormat, Modifiers, Pixels,
-    SharedString, Subscription, Window, div, img, prelude::*, relative, rems,
+    AnyElement, App, ClickEvent, Context, ElementId, Entity, Focusable, FontWeight, Hsla, Image, ImageFormat,
+    Modifiers, Pixels, SharedString, Subscription, Window, div, img, prelude::*, relative, rems,
 };
 use gpui_kit::TestSupportExt;
 use gpui_kit::base::Button as BaseButton;
@@ -41,6 +41,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     h_flex,
     label::Label,
+    list::ListState,
     menu::ContextMenuExt,
     v_flex,
 };
@@ -49,6 +50,14 @@ use rust_i18n::t;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::info;
+
+mod databases;
+mod navigation;
+mod workspaces;
+use databases::DatabaseNavigation;
+use navigation::NavigationDelegate;
+pub(crate) use workspaces::DatabaseWorkspaceSelected;
+use workspaces::DatabaseWorkspaces;
 
 const SIDEBAR_CONTAINER_ID: &str = "sidebar-container";
 const SIDEBAR_LIST_ID: &str = "sidebar-redis-servers";
@@ -112,6 +121,10 @@ pub struct ZedisSidebar {
     /// Internal state with cached server list.
     state: SidebarState,
 
+    databases: DatabaseNavigation,
+    workspaces: DatabaseWorkspaces,
+    navigation: Entity<ListState<NavigationDelegate>>,
+
     /// App logo (`icon.png`), decoded lazily by gpui's image cache.
     logo: Arc<Image>,
 
@@ -135,8 +148,10 @@ fn home_lives_in_the_sidebar() -> bool {
 
 impl ZedisSidebar {
     /// Create a new sidebar component with event subscriptions.
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut subscriptions = vec![];
+        let navigation = Self::new_navigation(window, cx);
+        subscriptions.push(cx.subscribe_in(&navigation, window, Self::on_navigation_event));
 
         let global_state = cx.global::<ZedisGlobalStore>().state();
         subscriptions.push(cx.subscribe(&global_state, |this, _global_state, event, cx| {
@@ -146,6 +161,7 @@ impl ZedisSidebar {
                 }
                 GlobalEvent::ServerSelected(server_id, _) => {
                     this.state.server_id = server_id.clone();
+                    this.databases.reveal(server_id);
                 }
                 _ => {}
             }
@@ -158,6 +174,9 @@ impl ZedisSidebar {
         };
         let mut this = Self {
             state: SidebarState::default(),
+            databases: DatabaseNavigation::default(),
+            workspaces: DatabaseWorkspaces::default(),
+            navigation,
             logo: load_logo("icon.png"),
             logo_light: load_logo("icon-light.png"),
             _subscriptions: subscriptions,
@@ -217,6 +236,8 @@ impl ZedisSidebar {
         }
 
         self.state.sections = sections;
+        self.databases.retain(servers.iter().map(|server| server.id.as_str()));
+        self.workspaces.retain(servers.iter().map(|server| server.id.as_str()));
     }
 
     /// Render the scrollable server list including Home and grouped connection rows.
@@ -496,12 +517,27 @@ fn server_row(input: ServerRowInput<'_>, window: &mut Window, cx: &mut App) -> A
         look,
     };
     let server_id = resolved.server_id.clone();
+    let sidebar = menu.sidebar.clone();
+    let collapsed = look.sidebar_collapsed;
     let button = if look.sidebar_collapsed {
         rail_monogram_button(&resolved, window, cx)
     } else {
         expanded_server_button(&resolved, window, cx)
     }
-    .on_click(move |e: &ClickEvent, _window, cx| navigate_server(&server_id, is_current, e.modifiers(), cx));
+    .on_click(move |e: &ClickEvent, window, cx| {
+        let mods = e.modifiers();
+        let secondary = mods.secondary(cx);
+        let open_tab = (secondary && mods.shift)
+            || (cx.global::<ZedisGlobalStore>().read(cx).sidebar_click_new_tab() != secondary);
+        if collapsed || open_tab {
+            navigate_server(&server_id, is_current, mods, cx);
+        } else {
+            let _ = sidebar.update(cx, |sidebar, cx| {
+                sidebar.navigation.read(cx).focus_handle(cx).focus(window, cx);
+                sidebar.toggle_navigation_connection(server_id.clone(), cx);
+            });
+        }
+    });
 
     let wrap = if look.sidebar_collapsed {
         h_flex().id(wrap_id).w_full().my_0p5().justify_center()
@@ -616,11 +652,6 @@ fn rail_monogram_button(row: &ResolvedServerRow<'_>, window: &mut Window, cx: &m
 
 fn expanded_server_button(row: &ResolvedServerRow<'_>, window: &mut Window, cx: &mut App) -> BaseButton {
     let look = row.look;
-    let icon_color = if row.is_current {
-        look.accent_color
-    } else {
-        look.muted_fg
-    };
     let name_color = if row.is_current { look.selected_fg } else { look.row_fg };
 
     sidebar_focus_button(
@@ -635,7 +666,7 @@ fn expanded_server_button(row: &ResolvedServerRow<'_>, window: &mut Window, cx: 
     .aria_selected(row.is_current)
     .w_full()
     .h_8()
-    .pl_3p5()
+    .pl_0()
     .pr_2()
     .justify_start()
     .child(
@@ -646,9 +677,11 @@ fn expanded_server_button(row: &ResolvedServerRow<'_>, window: &mut Window, cx: 
             .min_w_0()
             .overflow_hidden()
             .child(
-                div()
-                    .flex_none()
-                    .child(Icon::new(CustomIconName::Database).small().text_color(icon_color)),
+                div().flex_none().child(
+                    Icon::new(CustomIconName::DatabaseTree)
+                        .small()
+                        .text_color(cx.theme().danger),
+                ),
             )
             .child(
                 Label::new(row.name.clone())
@@ -865,6 +898,7 @@ fn group_header(
 
 impl Render for ZedisSidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.update_database_visibility(cx);
         let sidebar_collapsed = cx.global::<ZedisGlobalStore>().read(cx).sidebar_collapsed();
         let toggle_at_the_bottom = sidebar_collapsed || !home_lives_in_the_sidebar();
         let toggle_tooltip = if sidebar_collapsed {
@@ -885,11 +919,14 @@ impl Render for ZedisSidebar {
             .border_r_1()
             .border_color(sidebar_border)
             .child(
-                div()
+                v_flex()
                     .flex_1()
-                    .size_full()
                     .min_h_0()
-                    .child(self.render_server_list(window, cx)),
+                    .child(if sidebar_collapsed || self.state.sections.is_empty() {
+                        self.render_server_list(window, cx).into_any_element()
+                    } else {
+                        self.render_navigation(window, cx)
+                    }),
             )
             .when(toggle_at_the_bottom, |this| {
                 this.child(
@@ -919,7 +956,7 @@ impl Render for ZedisSidebar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::states::ServerView;
+    use crate::helpers::new_hot_keys;
     use crate::test_support::init_ui;
     use gpui::{AnyWindowHandle, Entity, MouseButton, TestAppContext, point, px, size};
     use gpui_kit::component::Root;
@@ -1114,8 +1151,12 @@ mod tests {
         .expect("the window is open");
     }
 
+    /// A click expands the connection without changing the editor; ⌘/Ctrl
+    /// opens a tab and ⌘/Ctrl ⇧ always a new one, Home too. The menu is the
+    /// connection's, and its link item follows the link: Disconnect while it
+    /// is up or coming back, Reconnect once it is down, neither without a tab.
     #[gpui::test]
-    fn a_row_opens_its_connection_and_its_menu_follows_the_link(cx: &mut TestAppContext) {
+    fn a_row_expands_its_connection_and_its_menu_follows_the_link(cx: &mut TestAppContext) {
         use crate::helpers::SidebarServerAction as A;
         init_ui(cx);
         let (handle, sidebar, sent) = open_sidebar(cx);
@@ -1139,11 +1180,8 @@ mod tests {
         cx.run_until_parked();
         cx.read(|cx| {
             let state = cx.global::<ZedisGlobalStore>().read(cx);
-            assert_eq!(state.selected_server(), Some(&("b".to_string(), 0)));
-            assert!(matches!(
-                state.route(),
-                Route::Server { id, db: 0, view: ServerView::Editor } if id.as_ref() == "b"
-            ));
+            assert!(state.selected_server().is_none());
+            assert!(sidebar.read(cx).databases.expanded.contains("b"));
         });
 
         cx.update_window(handle, |_, window, cx| {
@@ -1207,6 +1245,18 @@ mod tests {
             assert_ne!(window.find("sidebar-srv-a").selected(), Some(true));
             assert_eq!(window.find("sidebar-grp-h-prod").expanded(), Some(true));
             window.click("sidebar-srv-a", cx);
+        })
+        .expect("the window is open");
+        cx.run_until_parked();
+
+        // Browsing a branch leaves Home active. An actual workspace selection
+        // (opening a key or choosing Open) changes the connection highlight.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find(SIDEBAR_HOME_ITEM_ID).selected(), Some(true));
+            cx.global::<ZedisGlobalStore>().clone().update(cx, |state, cx| {
+                state.connect_server("a".to_owned(), 0, cx);
+            });
         })
         .expect("the window is open");
         cx.run_until_parked();
@@ -1280,6 +1330,7 @@ mod tests {
     #[gpui::test]
     fn keyboard_activation_and_empty_state(cx: &mut TestAppContext) {
         init_ui(cx);
+        cx.update(|cx| cx.bind_keys(new_hot_keys(cx)));
         let (handle, sidebar, _) = open_sidebar(cx);
 
         // Empty list renders quiet empty hint only when expanded.
@@ -1310,7 +1361,7 @@ mod tests {
         .expect("the window is open");
         cx.run_until_parked();
 
-        for _ in 0..8 {
+        for _ in 0..16 {
             let hit = cx
                 .update_window(handle, |_, window, cx| {
                     window.press("tab", cx);
@@ -1331,7 +1382,8 @@ mod tests {
 
         cx.read(|cx| {
             let state = cx.global::<ZedisGlobalStore>().read(cx);
-            assert_eq!(state.selected_server(), Some(&("b".to_string(), 0)));
+            assert!(state.selected_server().is_none());
+            assert!(sidebar.read(cx).databases.expanded.contains("b"));
         });
     }
 }

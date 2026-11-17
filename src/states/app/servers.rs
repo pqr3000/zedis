@@ -87,8 +87,7 @@ impl ZedisAppState {
     }
 
     /// Connect to a server, landing on the editor — the sidebar / server-card
-    /// / palette / tray entry points. The status-bar DB switch, which keeps
-    /// the current view, goes through `set_selected_server` instead.
+    /// / palette / tray entry points.
     ///
     /// These entry points mean "(re)connect", not just "navigate", so the
     /// selection is announced *unconditionally* before routing. `apply_route`'s
@@ -128,7 +127,7 @@ impl ZedisAppState {
     }
 
     /// Activate a connection: routes to it, keeping the current server view
-    /// when one is active (the status-bar DB switch) and falling back to the
+    /// when one is active and falling back to the
     /// editor otherwise (sidebar / server-card / tray connects). Route
     /// transition, snapshot, `last_db` and persistence all flow through
     /// `apply_route`.

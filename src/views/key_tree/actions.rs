@@ -25,7 +25,7 @@ use super::*;
 use crate::states::ModuleTypeId;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Action)]
-pub(super) enum KeyTreeAction {
+pub(crate) enum KeyTreeAction {
     Search(SharedString),
     Clear,
     DeleteMultipleKeys,
@@ -134,7 +134,12 @@ impl Render for ZedisKeyTree {
 }
 
 /// A query mode picked: saved for the server, and the scan's from now on.
-fn on_query_mode(this: &mut ZedisKeyTree, e: &QueryMode, _window: &mut Window, cx: &mut Context<ZedisKeyTree>) {
+pub(crate) fn on_query_mode(
+    this: &mut ZedisKeyTree,
+    e: &QueryMode,
+    _window: &mut Window,
+    cx: &mut Context<ZedisKeyTree>,
+) {
     let new_mode = *e;
 
     let server_id = this.server_state.read(cx).server_id();
@@ -153,7 +158,12 @@ fn on_query_mode(this: &mut ZedisKeyTree, e: &QueryMode, _window: &mut Window, c
 }
 
 /// A type picked in the filter menu: the server state's filter.
-fn on_type_filter(this: &mut ZedisKeyTree, e: &KeyTypeFilter, _window: &mut Window, cx: &mut Context<ZedisKeyTree>) {
+pub(crate) fn on_type_filter(
+    this: &mut ZedisKeyTree,
+    e: &KeyTypeFilter,
+    _window: &mut Window,
+    cx: &mut Context<ZedisKeyTree>,
+) {
     let filter = match e {
         KeyTypeFilter::All => None,
         KeyTypeFilter::String => Some(KeyType::String),
@@ -176,7 +186,12 @@ fn on_type_filter(this: &mut ZedisKeyTree, e: &KeyTypeFilter, _window: &mut Wind
 
 /// Every action of the tree's menus, keys and bar. What changes how the
 /// tree is read is here; what does something to keys is `key_actions`'s.
-fn on_tree_action(this: &mut ZedisKeyTree, e: &KeyTreeAction, window: &mut Window, cx: &mut Context<ZedisKeyTree>) {
+pub(super) fn on_tree_action(
+    this: &mut ZedisKeyTree,
+    e: &KeyTreeAction,
+    window: &mut Window,
+    cx: &mut Context<ZedisKeyTree>,
+) {
     match e {
         KeyTreeAction::ChangeChannelMode => {
             this.server_state.update(cx, |state, cx| {
@@ -363,7 +378,7 @@ fn on_tree_action(this: &mut ZedisKeyTree, e: &KeyTreeAction, window: &mut Windo
 }
 
 /// The editor's ⌘F and ⌘⌫, where the tree has the focus; the rest go on.
-fn on_editor_action(
+pub(super) fn on_editor_action(
     this: &mut ZedisKeyTree,
     event: &EditorAction,
     window: &mut Window,
@@ -371,7 +386,7 @@ fn on_editor_action(
 ) {
     match event {
         EditorAction::Search => {
-            this.keyword_state.focus_handle(cx).focus(window, cx);
+            this.focus_search(window, cx);
         }
         EditorAction::Delete => {
             // `cmd-backspace` while the tree is focused deletes the

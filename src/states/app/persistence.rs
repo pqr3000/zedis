@@ -107,17 +107,14 @@ pub fn save_app_state(state: &ZedisAppState) -> Result<()> {
     Ok(())
 }
 
-/// Width the content pane actually gets: the viewport minus the sidebar *as it
-/// currently is*. Table views size their columns from this, and reading it as
-/// the expanded [`SIDEBAR_WIDTH`] left them ~128px short whenever the sidebar was
-/// collapsed to its icon rail.
+/// Width available to the workspace after the expanded tree or collapsed rail.
 ///
 /// Note this is sampled when a view builds its columns; collapsing the sidebar
 /// while such a view is already open won't re-lay it out until the view is
 /// rebuilt (it is dropped on route change).
 pub fn content_area_width(window: &Window, cx: &App) -> Pixels {
-    let sidebar = cx.global::<ZedisGlobalStore>().read(cx).sidebar_px();
-    window.viewport_size().width - sidebar
+    let width = window.viewport_size().width;
+    width - cx.global::<ZedisGlobalStore>().read(cx).sidebar_px(width)
 }
 
 /// Debounce window for high-frequency config saves (panel drags, sliders).

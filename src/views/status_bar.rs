@@ -25,8 +25,8 @@ use crate::{
         pacing, resolve_tag_chip, saves_files, with_hot_key,
     },
     states::{
-        ConnectionErrorKind, ConnectionHealth, ErrorMessage, RedisKeySpaceStats, ReplicaInfo, SOFT_WRAP_MAX_BYTES,
-        ServerEvent, ServerToolsAction, ServerView, ViewMode, ZedisGlobalStore, ZedisServerState, content_area_width,
+        ConnectionErrorKind, ConnectionHealth, ErrorMessage, ReplicaInfo, SOFT_WRAP_MAX_BYTES, ServerEvent,
+        ServerToolsAction, ServerView, ViewMode, ZedisGlobalStore, ZedisServerState, content_area_width,
         get_session_option, i18n_acl, i18n_benchmark, i18n_common, i18n_config_editor, i18n_functions, i18n_hotkeys,
         i18n_key_tree, i18n_keyspace_notifications, i18n_lua_scripts, i18n_monitor, i18n_persistence, i18n_search,
         i18n_server_info, i18n_server_load, i18n_sidebar, i18n_status_bar, i18n_timeseries, i18n_topology,
@@ -34,11 +34,8 @@ use crate::{
     },
     views::confirm_dangerous_command,
 };
-use gpui::{
-    Anchor, App, Entity, Hsla, MouseButton, Pixels, SharedString, Subscription, Task, TextAlign, Window, div,
-    prelude::*, rems,
-};
-use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
+use gpui::{Anchor, App, Entity, Hsla, SharedString, Subscription, Task, TextAlign, Window, div, prelude::*, rems};
+use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, IndexPath, Sizable, StyledExt,
     button::{Button, ButtonVariants},
@@ -48,7 +45,7 @@ use gpui_kit::component::{
     tooltip::Tooltip,
 };
 use rust_i18n::t;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tracing::{debug, info};
 use zedis_ui::ZedisDivider;
 
@@ -73,28 +70,6 @@ fn format_size(dbsize: Option<u64>, listed: usize) -> SharedString {
         "--".to_string()
     }
     .into()
-}
-
-// --- Local State ---
-
-/// Make `db` the database select's committed choice, unless it already is.
-///
-/// `set_items` swaps the rows and nothing else. A choice made while there
-/// were none — the first build, the moment after a server switch — stays
-/// empty, and the trigger still reads "DB: n" off the list's cursor; Esc then
-/// puts that cursor back on the (empty) committed choice and the trigger goes
-/// blank. Not re-applied when it already matches: the rows are rebuilt
-/// whenever a key count changes, and that would pull the cursor back under a
-/// user moving it through the open menu.
-fn commit_selected_db(
-    state: &mut SelectState<Vec<DbInfo>>,
-    db: usize,
-    window: &mut Window,
-    cx: &mut Context<SelectState<Vec<DbInfo>>>,
-) {
-    if state.selected_value() != Some(&db) {
-        state.set_selected_index(Some(IndexPath::new(db)), window, cx);
-    }
 }
 
 /// The content width from which the bar names its counts ("0 / 2 clients"
@@ -203,62 +178,6 @@ struct StatusBarServerState {
     active_alert_count: usize,
 }
 
-/// DB-dropdown row geometry in `rems`, shared by the row renderer and the
-/// menu-width calculation so they scale together with UI font size.
-const DB_MENU_CHAR_REMS: f32 = 0.56;
-/// Fixed label column ("DB: 15" = 6 mono chars) so the counts line up.
-const DB_LABEL_COL_REMS: f32 = 3.5;
-
-#[derive(Debug, Clone)]
-struct DbInfo {
-    label: SharedString,
-    db: usize,
-    /// Key count from the heartbeat's `INFO keyspace` (0 = empty or not
-    /// yet sampled) — rendered as a muted figure beside the label so the
-    /// dropdown answers "which db has the keys?" without switching.
-    keys: u64,
-}
-
-impl SelectItem for DbInfo {
-    type Value = usize;
-    fn title(&self) -> SharedString {
-        self.label.clone()
-    }
-    fn value(&self) -> &Self::Value {
-        &self.db
-    }
-    // Dropdown row only — the trigger falls back to `title()` and stays
-    // a compact "DB: n".
-    fn render(&self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        h_flex()
-            .gap_3()
-            // Fixed label column so the counts line up (mono font cascades
-            // from the status bar).
-            .child(div().min_w(rems(DB_LABEL_COL_REMS)).child(self.label.clone()))
-            .when(self.keys > 0, |this| {
-                this.child(
-                    div()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(SharedString::from(group_thousands(self.keys))),
-                )
-            })
-    }
-}
-
-/// Map the `INFO keyspace` section (`"db0"` → stats) onto a dense per-db
-/// key-count vec of length `databases` (missing dbs are empty ⇒ 0).
-fn keyspace_key_counts(keyspace: &HashMap<String, RedisKeySpaceStats>, databases: usize) -> Vec<u64> {
-    let mut counts = vec![0u64; databases];
-    for (name, stats) in keyspace {
-        if let Some(db) = name.strip_prefix("db").and_then(|s| s.parse::<usize>().ok())
-            && db < counts.len()
-        {
-            counts[db] = stats.keys;
-        }
-    }
-    counts
-}
-
 /// Local state for the status bar to cache formatted strings and colors.
 /// This prevents re-calculating strings on every render frame.
 #[derive(Default)]
@@ -272,20 +191,9 @@ pub struct ZedisStatusBar {
     state: StatusBarState,
 
     viewer_mode_state: Entity<SelectState<SearchableVec<SharedString>>>,
-    db_state: Entity<SelectState<Vec<DbInfo>>>,
-    /// The database list is open — from the press on its trigger until the
-    /// select reports a choice or a dismissal. The trigger's tooltip is
-    /// held back meanwhile: it opened over the bottom rows of the list.
-    db_menu_open: bool,
     should_reset_viewer_mode: Option<bool>,
-    should_reset_db: Option<bool>,
-    should_rebuild_db_items: Option<usize>,
     server_state: Entity<ZedisServerState>,
     heartbeat_task: Option<Task<()>>,
-    databases: usize,
-    /// Latest per-db key counts (index = db) from `INFO keyspace`; a change
-    /// triggers a db-item rebuild so the dropdown shows fresh counts.
-    db_key_counts: Vec<u64>,
     readonly: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -314,11 +222,6 @@ impl ZedisStatusBar {
                 }
                 ServerEvent::ServerInfoUpdated => {
                     this.readonly = server_state.read(cx).readonly();
-                    let databases = server_state.read(cx).databases();
-                    if this.databases != databases {
-                        this.databases = databases;
-                        this.should_rebuild_db_items = Some(databases);
-                    }
                     server_state.update(cx, |state, cx| {
                         state.refresh_redis_info(cx);
                     });
@@ -392,40 +295,11 @@ impl ZedisStatusBar {
             },
         ));
 
-        let db_state = cx.new(|cx| SelectState::new(vec![], Some(IndexPath::new(0)), window, cx));
-        subscriptions.push(cx.subscribe_in(
-            &db_state,
-            window,
-            |view, _state, event: &SelectEvent<Vec<DbInfo>>, _window, cx| match event {
-                SelectEvent::Confirm(value) => {
-                    // A choice or a dismissal: either way the list is closed.
-                    view.db_menu_open = false;
-                    cx.notify();
-                    let Some(db) = *value else {
-                        return;
-                    };
-                    let server_id = view.server_state.read(cx).server_id().to_string();
-                    cx.update_global::<ZedisGlobalStore, ()>(|store, cx| {
-                        store.update(cx, |state, cx| {
-                            state.set_selected_server((server_id, db), cx);
-                        });
-                    });
-                }
-            },
-        ));
-
         let readonly = server_state.read(cx).readonly();
-        let databases = server_state.read(cx).databases();
 
         let mut this = Self {
-            databases,
-            db_key_counts: Vec::new(),
-            should_rebuild_db_items: Some(databases),
             heartbeat_task: None,
             viewer_mode_state,
-            db_state,
-            db_menu_open: false,
-            should_reset_db: None,
             server_state: server_state.clone(),
             _subscriptions: subscriptions,
             should_reset_viewer_mode: None,
@@ -454,13 +328,6 @@ impl ZedisStatusBar {
         } else {
             self.state.server_state.tag = SharedString::default();
             self.state.server_state.tag_color_key = None;
-        }
-        self.should_reset_db = Some(true);
-        // Drop the previous server's key counts right away — the new
-        // server's arrive with its first heartbeat INFO.
-        if !self.db_key_counts.is_empty() {
-            self.db_key_counts.clear();
-            self.should_rebuild_db_items = Some(self.databases);
         }
         self.state.data_format = None;
         self.state.error = None;
@@ -557,14 +424,6 @@ impl ZedisStatusBar {
             features: state.features(),
             active_alert_count: state.active_alerts().len(),
         };
-        // Per-db key counts for the DB dropdown (#116). Rebuild the select
-        // items only on an actual change so the 2s heartbeat doesn't churn
-        // the dropdown state.
-        let db_key_counts = keyspace_key_counts(&redis_info.keyspace, self.databases);
-        if self.db_key_counts != db_key_counts {
-            self.db_key_counts = db_key_counts;
-            self.should_rebuild_db_items = Some(self.databases);
-        }
     }
     /// Start the heartbeat task. 2-second cadence keeps the chips
     /// (latency, used memory, connected clients, replication lag)
@@ -639,36 +498,6 @@ impl Render for ZedisStatusBar {
         if let Some(true) = self.should_reset_viewer_mode.take() {
             self.viewer_mode_state.update(cx, |state, cx| {
                 state.set_selected_index(Some(IndexPath::new(0)), window, cx);
-            });
-        }
-        if let Some(true) = self.should_reset_db.take() {
-            let db = cx
-                .global::<ZedisGlobalStore>()
-                .read(cx)
-                .selected_server()
-                .map(|(_, db)| *db)
-                .unwrap_or_default();
-            self.db_state.update(cx, |state, cx| {
-                state.set_selected_index(Some(IndexPath::new(db)), window, cx);
-            });
-        }
-        if let Some(databases) = self.should_rebuild_db_items.take() {
-            let db_items = (0..databases)
-                .map(|db| DbInfo {
-                    label: format!("DB: {}", db).into(),
-                    db,
-                    keys: self.db_key_counts.get(db).copied().unwrap_or(0),
-                })
-                .collect::<Vec<_>>();
-            let db = cx
-                .global::<ZedisGlobalStore>()
-                .read(cx)
-                .selected_server()
-                .map(|(_, db)| *db)
-                .unwrap_or_default();
-            self.db_state.update(cx, |state, cx| {
-                state.set_items(db_items, window, cx);
-                commit_selected_db(state, db, window, cx);
             });
         }
         let status_text = cx.theme().muted_foreground;
@@ -893,85 +722,10 @@ mod tests {
         );
     }
 
-    fn db_rows(count: usize) -> Vec<DbInfo> {
-        (0..count)
-            .map(|db| DbInfo {
-                label: format!("DB: {db}").into(),
-                db,
-                keys: 0,
-            })
-            .collect()
-    }
-
-    /// The order the status bar builds its database select in: created
-    /// empty, told which database is open before the rows arrive, then given
-    /// them. Esc puts the list's cursor back on the committed choice, so an
-    /// empty one blanked the trigger.
-    #[gpui::test]
-    fn the_open_database_is_committed_once_the_rows_arrive(cx: &mut TestAppContext) {
-        cx.update(gpui_kit::component::init);
-        let window = cx.add_empty_window();
-        window.update(|window, cx| {
-            let select = cx.new(|cx| SelectState::new(Vec::<DbInfo>::new(), Some(IndexPath::new(0)), window, cx));
-            select.update(cx, |state, cx| {
-                state.set_selected_index(Some(IndexPath::new(2)), window, cx);
-                state.set_items(db_rows(4), window, cx);
-                assert_eq!(state.selected_value(), None, "set_items commits nothing by itself");
-
-                commit_selected_db(state, 2, window, cx);
-                assert_eq!(state.selected_value(), Some(&2));
-                assert_eq!(state.selected_index(cx), Some(IndexPath::new(2)));
-
-                // New key counts rebuild the rows; the choice stands.
-                state.set_items(db_rows(4), window, cx);
-                commit_selected_db(state, 2, window, cx);
-                assert_eq!(state.selected_value(), Some(&2));
-            });
-        });
-    }
-
     #[test]
     fn format_size_groups_both_counts() {
         assert_eq!(format_size(Some(500_000), 10_535).as_ref(), "10,535/500,000");
         assert_eq!(format_size(None, 10_535).as_ref(), "--");
-    }
-
-    #[test]
-    fn keyspace_key_counts_maps_dense_and_ignores_out_of_range() {
-        let mut keyspace = HashMap::new();
-        keyspace.insert(
-            "db0".to_string(),
-            RedisKeySpaceStats {
-                keys: 42,
-                ..Default::default()
-            },
-        );
-        keyspace.insert(
-            "db15".to_string(),
-            RedisKeySpaceStats {
-                keys: 7,
-                ..Default::default()
-            },
-        );
-        // Out of range for the configured db count — must not panic or land.
-        keyspace.insert(
-            "db99".to_string(),
-            RedisKeySpaceStats {
-                keys: 1,
-                ..Default::default()
-            },
-        );
-        // Not a keyspace line shape — ignored.
-        keyspace.insert("dbx".to_string(), RedisKeySpaceStats::default());
-
-        let counts = keyspace_key_counts(&keyspace, 16);
-        assert_eq!(counts.len(), 16);
-        assert_eq!(counts[0], 42);
-        assert_eq!(counts[15], 7);
-        // Every db INFO didn't mention is empty.
-        assert!(counts[1..15].iter().all(|&c| c == 0));
-
-        assert!(keyspace_key_counts(&keyspace, 0).is_empty());
     }
 
     /// The bar gives things up one at a time as the content narrows, in one

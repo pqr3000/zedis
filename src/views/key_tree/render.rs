@@ -189,11 +189,12 @@ impl ZedisKeyTree {
         let muted = cx.theme().muted_foreground;
         let popover_bg = cx.theme().popover;
 
-        div()
+        v_flex()
             .p_1()
             .bg(cx.theme().sidebar)
             .text_color(cx.theme().sidebar_foreground)
-            .h_full()
+            .flex_1()
+            .min_h_0()
             // Positioning context for the sticky-ancestor overlay below.
             .relative()
             // Wheel/trackpad scrolling repaints the list without notifying its
@@ -286,12 +287,10 @@ impl ZedisKeyTree {
     /// - Clearable input (X button appears when text entered)
     /// - Regex error line under the bar when the pattern will not compile
     pub(super) fn render_keyword_input(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let server_state_clone = self.server_state.clone();
         let server_state = self.server_state.read(cx);
         let scanning = server_state.scanning();
         let readonly = server_state.readonly();
         let server_id = server_state.server_id().to_string();
-        let recent_scope = recent_keys_scope(server_id.as_str(), server_state.db());
         let server_id_changed = server_id.as_str() != self.state.server_id.as_str();
         let _ = server_state;
         if server_id_changed {
@@ -300,43 +299,26 @@ impl ZedisKeyTree {
                 state.set_value(SharedString::default(), window, cx);
             });
         }
-        let query_mode = self.state.query_mode;
-        let regex_mode = self.state.regex_mode;
-        let type_filter = self.server_state.read(cx).type_filter();
-        let module_types = self.server_state.read(cx).module_types_seen();
-        let show_key_tree_ttl = self.server_state.read(cx).show_key_tree_ttl();
-        let ttl_filter = self.state.selected_ttl_filter;
-        let sort = self.state.sort;
-        // Always offer the tag filter next to Type/TTL (not buried in ⋯ and
-        // not gated on whether any tag records exist — empty servers still
-        // show "All keys").
-        let tag_filter_active = self.state.selected_tag_filter;
+        let filter_menu = FilterMenu::for_tree(self, cx);
+        let active_filters = self.active_filters(
+            filter_menu.type_filter,
+            filter_menu.show_key_tree_ttl,
+            filter_menu.ttl_filter,
+            filter_menu.tag_filter_active,
+            cx,
+        );
 
         // Select icon based on query mode. In regex mode the mode no longer
         // reaches the server — the scan runs unfiltered — so the box says
         // "regex" instead of pretending to be one of the three.
-        let icon = if regex_mode {
+        let icon = if filter_menu.regex_mode {
             Icon::new(CustomIconName::Regex)
         } else {
-            match query_mode {
+            match filter_menu.query_mode {
                 QueryMode::All => Icon::new(IconName::Asterisk), // * for all keys
                 QueryMode::Prefix => Icon::new(CustomIconName::ChevronUp), // ~ for prefix
                 QueryMode::Exact => Icon::new(CustomIconName::Equal), // = for exact match
             }
-        };
-        let server_id_for_favorites: SharedString = server_id.clone().into();
-        let filter_menu = FilterMenu {
-            server_state_clone,
-            server_id_for_favorites,
-            recent_scope,
-            query_mode,
-            regex_mode,
-            type_filter,
-            module_types,
-            tag_filter_active,
-            show_key_tree_ttl,
-            ttl_filter,
-            sort,
         };
         let query_mode_dropdown = DropdownButton::new("dropdown")
             .button(
@@ -361,31 +343,15 @@ impl ZedisKeyTree {
             }));
         // keyword input
         let keyword_input = Input::new(&self.keyword_state)
+            .id(KEYWORD_INPUT_ID)
             .w_full()
             .flex_1()
             .px_0()
             .prefix(query_mode_dropdown)
             .suffix(search_btn)
             .cleanable(true);
-        // "Multi-selecting" is the mode *or* any selection a modifier click
-        // built without it — the menu entry has to say the same thing the
-        // tree is doing.
-        let (multi_select_mode, selected_count) = {
-            let delegate = self.key_tree_list_state.read(cx).delegate();
-            (delegate.enabled_multiple_selection, delegate.selected_items.len())
-        };
-        let enabled_multiple_selection = multi_select_mode || selected_count > 0;
-        let refresh_interval_sec = self.state.refresh_interval_sec;
-        let flat_view = self.state.flat_view;
-        let regex_mode = self.state.regex_mode;
-
-        let more_menu = TreeMoreMenu {
-            readonly,
-            enabled_multiple_selection,
-            refresh_interval_sec,
-            flat_view,
-            regex_mode,
-        };
+        let selected_count = self.key_tree_list_state.read(cx).delegate().selected_items.len();
+        let more_menu = TreeMoreMenu::for_tree(self, cx);
         let more_dropdown = Button::new("key-tree-more-dropdown")
             .outline()
             .icon(Icon::new(IconName::Ellipsis))
@@ -393,8 +359,6 @@ impl ZedisKeyTree {
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, cx| {
                 more_menu.build(menu, window, cx)
             });
-
-        let active_filters = self.active_filters(type_filter, show_key_tree_ttl, ttl_filter, tag_filter_active, cx);
 
         // A regex that will not compile is reported under the bar, not by
         // emptying the tree: half a pattern is a normal state while typing.

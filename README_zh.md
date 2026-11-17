@@ -36,6 +36,8 @@ https://github.com/user-attachments/assets/d7007ecf-bbfd-4e68-bbaf-437091f711e7
 - 🌐 **连你真正在跑的东西** —— TLS、SSH、Cluster、Sentinel；Redis 与 Valkey 同为一等公民；Dragonfly、Garnet、代理和云托管缺什么会灰显并说明原因。
 - ⌨️ **给天天盯着 Redis 的人** —— ⌘K、带补全的 redis-cli、AI 命令助手、跨服务器复制与对比，同一套应用也能跑在浏览器里。
 
+连接、DB、目录和 Key 组成一棵连续的侧栏树，共用一个滚动条，不显示内嵌搜索栏。展开或折叠分支会保留右侧的值，点击 Key 才打开对应 DB 的编辑器。每个 DB 独立保留搜索、扫描进度和目录展开状态，直到窗口关闭。拖动侧栏右边缘可调整树宽，重新打开窗口会恢复上次的宽度。Ctrl/⌘+F 可搜索当前聚焦的 DB；展开 DB 后，还可从该行的 ⋯ 菜单筛选、查看收藏与最近打开的键。正常打开连接和恢复会话也使用这一布局，Ctrl/⌘ 点击沿用原有标签页偏好。
+
 已经在用 Redis Insight、ARDM 或 Tiny RDM？**粘贴导出文件，所有连接一次迁入。**
 
 📖 **[每个面板、查看器和快捷键 →](./docs/FEATURES_zh.md)**

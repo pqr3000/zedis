@@ -17,6 +17,7 @@ use crate::states::SettingsAction;
 use gpui::Action;
 use gpui::App;
 use gpui::KeyBinding;
+use gpui::NoAction;
 use gpui::SharedString;
 // `input::Copy` and not an import of it: the name would shadow the trait.
 #[cfg(target_family = "wasm")]
@@ -881,6 +882,9 @@ pub fn new_hot_keys(cx: &App) -> Vec<KeyBinding> {
         keys.push(bind_keystroke("secondary-shift-=", ZoomAction::In, None, cx));
     }
     keys.extend([
+        // Let a focused button inside a virtual sidebar row handle Enter.
+        // When the list itself owns focus, its usual Confirm binding applies.
+        bind_keystroke("enter", NoAction {}, Some("SidebarTreeRow"), cx),
         // Esc on a tool page returns to the editor (mirrors the page's
         // back button). Scoped to the `Workspace` context (the content
         // container) so it never reaches overlays that live outside it —

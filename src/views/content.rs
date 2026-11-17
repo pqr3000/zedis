@@ -19,8 +19,8 @@ use crate::views::{ZedisKeyspaceNotifications, ZedisMonitor, ZedisTopology};
 use crate::{
     helpers::{EditorAction, get_key_tree_widths},
     states::{
-        GlobalEvent, Route, ServerEvent, ServerView, ZedisGlobalStore, ZedisServerState, i18n_common,
-        update_app_state_and_save_quiet_debounced,
+        GlobalEvent, Route, ServerEvent, ServerView, ZedisGlobalStore, ZedisServerState, content_area_width,
+        i18n_common, update_app_state_and_save_quiet_debounced,
     },
     views::{
         ZedisAclManager, ZedisBenchmark, ZedisClientsManager, ZedisConfigEditor, ZedisEditor, ZedisFunctionEditor,
@@ -29,7 +29,11 @@ use crate::{
         ZedisTerminal, ZedisTimeSeriesExplorer, ZedisUnsupportedPanel, ZedisValueSearch, ZedisWorkbench,
     },
 };
-use gpui::{AnyView, App, Entity, FocusHandle, Focusable, Pixels, Subscription, Window, div, prelude::*, rems};
+use gpui::{
+    AnyElement, AnyView, App, Entity, FocusHandle, Focusable, Pixels, SharedString, Subscription, Window, div,
+    prelude::*, rems,
+};
+use gpui_kit::TestSupportExt;
 use gpui_kit::component::{
     resizable::{ResizableState, h_resizable, resizable_panel},
     v_flex,
@@ -40,6 +44,8 @@ use zedis_ui::ZedisSkeletonLoading;
 
 // Constants for UI dimensions
 const LOADING_SKELETON_MAX_REMS: f32 = 37.5;
+
+mod database_workspace;
 
 /// Main content area component for the Zedis application
 ///
@@ -54,6 +60,8 @@ const LOADING_SKELETON_MAX_REMS: f32 = 37.5;
 /// multi-select, and the search box — and is only dropped when leaving
 /// server routes entirely or when the active connection `(id, db)` changes.
 pub struct ZedisContent {
+    /// A sidebar database owns this workspace's identity for its lifetime.
+    sidebar_tree: bool,
     /// Reference to the server state containing Redis connection and data
     server_state: Entity<ZedisServerState>,
 
@@ -111,7 +119,7 @@ impl ZedisContent {
         }
         // Editor suite: keep for any `Route::Server` so tool pages don't
         // wipe expand/scroll/multi-select/keyword. Drop only off-server.
-        if !route.is_server() {
+        if !route.is_server() && !self.sidebar_tree {
             self.drop_editor_suite();
         }
         if route != Route::Protos {
@@ -198,6 +206,9 @@ impl ZedisContent {
         self.active = active;
         self.server_state.update(cx, |state, _| state.set_background(!active));
         if active {
+            if self.sidebar_tree {
+                self.current_route = cx.global::<ZedisGlobalStore>().read(cx).route();
+            }
             // Flag only — callers (`activate_tab`, close handlers) always
             // `cx.notify()` / `project_active_tab` next. Notifying here would
             // paint once against the *old* global route before projection.
@@ -243,6 +254,12 @@ impl ZedisContent {
                     if !this.active {
                         return;
                     }
+                    if this.sidebar_tree
+                        && (this.server_state.read(cx).server_id() != server_id.as_str()
+                            || this.server_state.read(cx).db() != *db)
+                    {
+                        return;
+                    }
                     if server_id.is_empty() {
                         // Disconnect / Home: drop the suite so a later
                         // reconnect never reuses another server's tree.
@@ -256,9 +273,11 @@ impl ZedisContent {
                         (s.server_id().to_string(), s.db())
                     };
                     let connection_changed = prev_id.as_str() != server_id.as_str() || prev_db != *db;
-                    this.server_state.update(cx, |state, cx| {
-                        state.select(server_id.clone(), *db, cx);
-                    });
+                    if !this.sidebar_tree {
+                        this.server_state.update(cx, |state, cx| {
+                            state.select(server_id.clone(), *db, cx);
+                        });
+                    }
                     // Fresh connection ⇒ fresh editor suite (keyword /
                     // multi-select / scroll must not carry over).
                     if connection_changed {
@@ -321,6 +340,7 @@ impl ZedisContent {
         info!("Creating new content view");
 
         Self {
+            sidebar_tree: false,
             server_state,
             status_bar,
             current_route: route,
@@ -534,7 +554,7 @@ impl ZedisContent {
     /// - Right panel: Value editor or terminal for the selected key
     ///
     /// The key tree width is user-adjustable and persisted to disk.
-    fn render_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let server_state = self.server_state.clone();
 
         let key_tree = self
@@ -544,12 +564,6 @@ impl ZedisContent {
                 cx.new(|cx| ZedisKeyTree::new(server_state.clone(), window, cx))
             })
             .clone();
-
-        let mut right_panel = resizable_panel();
-        if let Some(content_width) = cx.global::<ZedisGlobalStore>().read(cx).content_width() {
-            right_panel = right_panel.size(content_width);
-        }
-        let (key_tree_width, min_width, max_width) = get_key_tree_widths(self.key_tree_width);
 
         let right_panel_content = if server_state.read(cx).is_terminal() {
             let terminal = self
@@ -571,6 +585,12 @@ impl ZedisContent {
             value_editor.into_any_element()
         };
 
+        if self.sidebar_tree {
+            return right_panel_content;
+        }
+
+        let (key_tree_width, min_width, max_width) = get_key_tree_widths(self.key_tree_width);
+        let right_panel = resizable_panel().size((content_area_width(window, cx) - key_tree_width).max(Pixels::ZERO));
         h_resizable("editor-container")
             .child(
                 resizable_panel()
@@ -592,15 +612,22 @@ impl ZedisContent {
                     state.set_key_tree_width(width);
                 });
             }))
+            .into_any_element()
     }
 }
 
 impl Render for ZedisContent {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let route = cx.global::<ZedisGlobalStore>().read(cx).route();
-        let should_focus = std::mem::take(&mut self.should_focus);
+        let tree_focused = self.sidebar_tree
+            && self
+                .key_tree
+                .as_ref()
+                .is_some_and(|tree| tree.read(cx).contains_focused(window, cx));
+        let should_focus = std::mem::take(&mut self.should_focus) && !tree_focused;
         let base = v_flex()
             .id("main-container")
+            .test_support()
             .track_focus(&self.focus_handle)
             // Scope the Esc→back keybinding to the workspace only. The
             // command palette is a sibling of this view (see main.rs), so

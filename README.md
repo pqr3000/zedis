@@ -36,6 +36,8 @@ https://github.com/user-attachments/assets/d7007ecf-bbfd-4e68-bbaf-437091f711e7
 - 🌐 **Connects to what you actually run** — TLS, SSH, Cluster, Sentinel; Redis and Valkey as first-class; Dragonfly, Garnet, proxies and managed clouds grey out what they lack, with the reason.
 - ⌨️ **For people who live in Redis** — ⌘K, a redis-cli with completion, an AI command assistant, copy and diff across servers, and the same app in the browser.
 
+Browse connections, databases, folders and keys in one continuous sidebar tree with a single scrollbar and no inline search bars. Expanding or folding a branch keeps the value on the right; clicking a key opens its database's editor. Each database retains its own search, scan progress and expanded folders until the window closes. Drag the sidebar’s right edge to resize the tree. The window remembers its width. Ctrl/⌘+F opens search for the focused database. The ⋯ menu on an expanded database offers filters, favorites and recent keys. Normal connection opens and session restores use this layout; Ctrl/⌘-click retains the existing tab preference.
+
 Already on Redis Insight, ARDM or Tiny RDM? **Paste the export and every connection lands at once.**
 
 📖 **[Every panel, viewer and shortcut →](./docs/FEATURES.md)**

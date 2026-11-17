@@ -51,8 +51,15 @@ pub(crate) struct ContentTab {
 impl ContentTab {
     pub(super) fn new(server_id: String, db: usize, content: Entity<ZedisContent>, cx: &mut Context<Zedis>) -> Self {
         let server_state = content.read(cx).server_state();
-        let _health = cx.subscribe(&server_state, |this, _server_state, event, cx| {
-            if matches!(event, ServerEvent::ConnectionHealthChanged) {
+        let _health = cx.subscribe(&server_state, |this, server_state, event, cx| {
+            if matches!(
+                event,
+                ServerEvent::ConnectionHealthChanged
+                    | ServerEvent::ServerInfoUpdated
+                    | ServerEvent::ServerRedisInfoUpdated
+            ) {
+                this.sidebar
+                    .update(cx, |sidebar, cx| sidebar.update_databases(&server_state, cx));
                 this.sync_sidebar_health(cx);
             }
         });
@@ -204,6 +211,9 @@ impl Zedis {
             return;
         }
         let was_active = ix == self.active_tab;
+        self.tabs[ix]
+            .content
+            .update(cx, |content, cx| content.set_active(false, cx));
         self.tabs.remove(ix);
         if self.active_tab > ix {
             self.active_tab -= 1;
@@ -267,6 +277,9 @@ impl Zedis {
         }
         let was_active = self.active_tab == ix;
         let keep = self.tabs.remove(ix);
+        for tab in &self.tabs {
+            tab.content.update(cx, |content, cx| content.set_active(false, cx));
+        }
         self.tabs.clear();
         self.tabs.push(keep);
         self.active_tab = 0;
@@ -287,6 +300,9 @@ impl Zedis {
             return;
         }
         let active_closed = self.active_tab > ix;
+        for tab in &self.tabs[ix + 1..] {
+            tab.content.update(cx, |content, cx| content.set_active(false, cx));
+        }
         self.tabs.truncate(ix + 1);
         if active_closed {
             self.active_tab = ix;

@@ -72,6 +72,7 @@ fn retain_picks_with_rows(picks: &mut AHashSet<SharedString>, items: &[KeyTreeIt
 }
 
 pub(super) struct KeyTreeDelegate {
+    pub(super) sidebar: bool,
     pub(super) items: Vec<KeyTreeItem>,
     pub(super) enabled_multiple_selection: bool,
     pub(super) selected_items: AHashSet<SharedString>,
@@ -157,7 +158,13 @@ impl ListDelegate for KeyTreeDelegate {
         if entry.load_more_prefix.is_some() {
             return Some(load_more_row(ix, entry, cx));
         }
-        let icon = row_icon(entry, cx);
+        let icon = if self.sidebar && !entry.is_folder {
+            Icon::new(CustomIconName::Key)
+                .text_color(cx.theme().warning)
+                .into_any_element()
+        } else {
+            row_icon(entry, cx)
+        };
 
         let is_dark = cx.theme().is_dark();
         let is_folder = entry.is_folder;
@@ -168,10 +175,13 @@ impl ListDelegate for KeyTreeDelegate {
         // rebuilds (the list's selected index is cleared on every rebuild,
         // which made the accent vanish moments after selecting). Gated to leaf
         // keys: folders toggle expand/collapse on click, never "select".
-        let is_selected_row = !is_folder && self.server_state.read(cx).key().as_ref() == Some(&entry.id);
-        // Theme-neutral selection fill (`list_active`) so the active key reads
-        // clearly on any theme without competing with tag stripes.
-        let selected_row_bg = cx.theme().list_active;
+        let state = self.server_state.read(cx);
+        let is_selected_row = !is_folder && !state.is_background() && state.key().as_ref() == Some(&entry.id);
+        let selected_row_bg = if self.sidebar {
+            cx.theme().primary
+        } else {
+            cx.theme().list_active
+        };
         // Faint zebra stripe fill for banded leaf rows. Dark needs a higher
         // alpha than light — white-on-dark reads weaker than black-on-light at
         // the same opacity.
@@ -184,7 +194,6 @@ impl ListDelegate for KeyTreeDelegate {
         let show_ttl = self.server_state.read(cx).show_key_tree_ttl();
         let ttl_chip = ttl_chip(entry, show_ttl, cx);
 
-        // Quiet hover wash (`list_hover`), always weaker than `selected_row_bg`.
         let hover_bg = cx.theme().list_hover;
         // The check column appears in the mode, and also whenever a
         // selection exists — modifier clicks can build one without it.
@@ -237,7 +246,7 @@ impl ListDelegate for KeyTreeDelegate {
         };
         Some(
             ListItem::new(ix)
-                .font_family(get_mono_font_family())
+                .when(!self.sidebar, |row| row.font_family(get_mono_font_family()))
                 .w_full()
                 // Padding/background/hover live on the content div below so the
                 // hover fill is full-bleed and high-contrast; zero ListItem's
@@ -245,6 +254,7 @@ impl ListDelegate for KeyTreeDelegate {
                 .py_0()
                 .px_0()
                 .mb_1()
+                .when(self.sidebar, |row| row.h_8().mb_0())
                 .child(
                     div()
                         // Hover group so the inline delete button (below)
@@ -298,7 +308,7 @@ impl ListDelegate for KeyTreeDelegate {
                                 // takes its spot without overlapping it.
                                 .relative()
                                 .child(icon)
-                                .child(row_name(ix, entry, menu_open_here, cx))
+                                .child(row_name(ix, entry, menu_open_here, self.sidebar && is_selected_row, cx))
                                 // A checkbox of its own, not a picture of one: it
                                 // picks the key whether or not the mode is on (a
                                 // selection made with modifier clicks shows it
@@ -530,12 +540,14 @@ fn depth_guides(depth: usize, guide_color: Hsla) -> Vec<AnyElement> {
 /// A row's name — the last segment of its key or prefix — with the whole
 /// path in its tooltip, under it a key's note or a folder's tags; no
 /// tooltip while the row's menu is open.
-fn row_name(ix: IndexPath, entry: &KeyTreeItem, menu_open_here: bool, cx: &App) -> impl IntoElement {
+fn row_name(ix: IndexPath, entry: &KeyTreeItem, menu_open_here: bool, selected: bool, cx: &App) -> impl IntoElement {
     let is_folder = entry.is_folder;
     // Folders sit one brightness step below leaves; an *expanded* folder
     // steps back up to full foreground (with its open icon, see above) so
     // "which folders are open" reads at a glance.
-    let label_color = if is_folder && !entry.expanded {
+    let label_color = if selected {
+        cx.theme().primary_foreground
+    } else if is_folder && !entry.expanded {
         cx.theme().foreground.alpha(0.85)
     } else {
         cx.theme().foreground
@@ -823,6 +835,7 @@ mod tests {
         let mut list = None;
         let handle = cx.open_window(size(px(400.), px(300.)), |window, cx| {
             let delegate = KeyTreeDelegate {
+                sidebar: false,
                 items: vec![leaf("a"), leaf("b")],
                 enabled_multiple_selection: true,
                 selected_items: AHashSet::new(),
@@ -892,6 +905,7 @@ mod tests {
         let mut list = None;
         let handle = cx.open_window(size(px(480.), px(640.)), |window, cx| {
             let delegate = KeyTreeDelegate {
+                sidebar: false,
                 items,
                 enabled_multiple_selection: false,
                 selected_items: AHashSet::new(),

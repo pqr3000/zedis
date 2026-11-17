@@ -51,6 +51,8 @@ mod key_op_dialog;
 mod key_tag_dialog;
 mod key_timeline_dialog;
 mod key_tree;
+#[cfg(test)]
+pub(crate) use key_tree::sidebar_key_id;
 mod keyspace_notifications;
 mod kv_table;
 mod lcs_dialog;
@@ -86,6 +88,7 @@ mod set_ismember_dialog;
 mod setting_editor;
 mod shortcuts_overlay;
 mod sidebar;
+pub(crate) use sidebar::DatabaseWorkspaceSelected;
 mod slowlog_editor;
 mod status_bar;
 mod stream_editor;

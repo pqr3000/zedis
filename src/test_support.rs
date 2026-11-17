@@ -47,7 +47,12 @@ pub(crate) fn init_ui(cx: &mut TestAppContext) {
     cx.update(gpui_kit::component::init);
     cx.update(|cx| {
         cx.set_reduce_motion(true);
-        let app_state = cx.new(|_| ZedisAppState::default());
+        let app_state = cx.new(|_| {
+            let mut state = ZedisAppState::default();
+            // UI assertions use English regardless of the host OS language.
+            state.set_locale("en".to_string());
+            state
+        });
         cx.set_global(ZedisGlobalStore::new(app_state));
     });
 }

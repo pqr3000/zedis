@@ -76,20 +76,27 @@ mod actions;
 mod add_key;
 mod bar_menus;
 mod build;
+#[cfg(test)]
+mod database_tests;
 mod delegate;
 mod folder_delete;
 mod key_actions;
 mod pattern_ops;
 mod render;
 mod row_menu;
+mod sidebar;
+pub(crate) use sidebar::SidebarWorkspaceRequested;
+#[cfg(test)]
+pub(crate) use sidebar::sidebar_key_id;
 
 pub(crate) use pattern_ops::open_pattern_ops_dialog_with_pattern;
 
-use actions::KeyTreeAction;
+pub(crate) use actions::{KeyTreeAction, on_query_mode, on_type_filter};
 
 use build::*;
 use delegate::*;
 
+pub(crate) const KEYWORD_INPUT_ID: &str = "key-tree-keyword";
 const TREE_INDENT_BASE: f32 = 16.0; // Base indentation per level in pixels
 const TREE_INDENT_OFFSET: f32 = 8.0; // Additional offset for all items
 const EXPANDED_ITEMS_INITIAL_CAPACITY: usize = 10;
@@ -229,6 +236,8 @@ pub struct ZedisKeyTree {
     focus_handle: FocusHandle,
 
     auto_refresh_task: Option<Task<()>>,
+    external_visibility: Option<bool>,
+    sidebar_focus: Option<FocusHandle>,
 
     /// Trailing-edge rebuild scheduled while scan pages are streaming in;
     /// dropping it cancels the pending rebuild.
@@ -296,8 +305,31 @@ impl ZedisKeyTree {
     }
 
     /// Put the caret in the keyword filter (`EditorAction::Search` / ⌘F).
-    pub fn focus_search(&self, window: &mut Window, cx: &mut App) {
-        self.keyword_state.focus_handle(cx).focus(window, cx);
+    pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.external_visibility.is_some() {
+            self.open_sidebar_search(window, cx);
+        } else {
+            self.keyword_state.focus_handle(cx).focus(window, cx);
+        }
+    }
+
+    pub(crate) fn set_external_visibility(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.external_visibility != Some(visible) {
+            self.external_visibility = Some(visible);
+            self.start_auto_refresh(cx);
+        }
+    }
+
+    pub(crate) fn contains_focused(&self, window: &Window, cx: &App) -> bool {
+        self.focus_handle.contains_focused(window, cx)
+            || self
+                .sidebar_focus
+                .as_ref()
+                .is_some_and(|focus| focus.contains_focused(window, cx))
+    }
+
+    fn visible_on_route(&self, view: Option<ServerView>) -> bool {
+        self.external_visibility.unwrap_or(view == Some(ServerView::Editor))
     }
 
     /// Create a new key tree view with event subscriptions
@@ -314,28 +346,30 @@ impl ZedisKeyTree {
         // visible (user is on Metrics/Slowlog/…). Resume when Editor is
         // shown again so SCAN doesn't run against a hidden tree.
         let global_state = cx.global::<ZedisGlobalStore>().state();
-        subscriptions.push(cx.subscribe(&global_state, |this, _global, event, cx| match event {
-            GlobalEvent::RouteChanged(route) => {
-                if route.server_view() == Some(ServerView::Editor) {
-                    this.start_auto_refresh(cx);
-                } else {
-                    this.auto_refresh_task = None;
+        subscriptions.push(cx.subscribe(&global_state, |this, _global, event, cx| {
+            match event {
+                GlobalEvent::RouteChanged(route) => {
+                    if this.visible_on_route(route.server_view()) {
+                        this.start_auto_refresh(cx);
+                    } else {
+                        this.auto_refresh_task = None;
+                    }
                 }
-            }
-            // In the browser, tags and notes another account set on this
-            // server (ADR 17): the rows carry them from the build.
-            GlobalEvent::PageDataRefreshed { key_notes_of, rows, .. } => {
-                if key_notes_of
-                    .iter()
-                    .any(|id| id.as_str() == this.state.server_id.as_ref())
-                {
-                    this.update_key_tree(true, cx);
-                } else if *rows {
-                    // Favorites and recent keys are read as the tree is drawn.
-                    cx.notify();
+                // In the browser, tags and notes another account set on this
+                // server (ADR 17): the rows carry them from the build.
+                GlobalEvent::PageDataRefreshed { key_notes_of, rows, .. } => {
+                    if key_notes_of
+                        .iter()
+                        .any(|id| id.as_str() == this.state.server_id.as_ref())
+                    {
+                        this.update_key_tree(true, cx);
+                    } else if *rows {
+                        // Favorites and recent keys are read as the tree is drawn.
+                        cx.notify();
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }));
 
         // A scan can be started programmatically (e.g. Memory Analyzer's
@@ -472,6 +506,7 @@ impl ZedisKeyTree {
         info!(server_id, "Creating new key tree view");
 
         let delegate = KeyTreeDelegate {
+            sidebar: false,
             items: Vec::new(),
             enabled_multiple_selection: false,
             selected_items: AHashSet::with_capacity(5),
@@ -498,7 +533,7 @@ impl ZedisKeyTree {
         // keeps unrelated list notifies from ping-ponging renders.
         subscriptions.push(cx.observe(&key_tree_list_state, |this, state, cx| {
             let y = state.read(cx).scroll_handle().base_handle().offset().y.as_f32();
-            if (y - this.last_observed_scroll_y).abs() > f32::EPSILON {
+            if this.external_visibility.is_some() || (y - this.last_observed_scroll_y).abs() > f32::EPSILON {
                 this.last_observed_scroll_y = y;
                 cx.notify();
             }
@@ -521,6 +556,8 @@ impl ZedisKeyTree {
             server_state,
             should_enter_add_key_mode: None,
             auto_refresh_task: None,
+            external_visibility: None,
+            sidebar_focus: None,
             pending_tree_update: None,
             build_task: None,
             last_tree_update_at: None,
@@ -554,7 +591,7 @@ impl ZedisKeyTree {
 
     fn start_auto_refresh(&mut self, cx: &mut Context<Self>) {
         let auto_refresh_interval_sec = self.state.refresh_interval_sec;
-        if auto_refresh_interval_sec == 0 {
+        if auto_refresh_interval_sec == 0 || self.external_visibility == Some(false) {
             self.auto_refresh_task = None;
             return;
         }
@@ -1079,6 +1116,12 @@ impl ZedisKeyTree {
             if !is_selected {
                 self.server_state.update(cx, |state, cx| {
                     state.select_key(item_id.clone(), cx);
+                });
+            }
+            if self.external_visibility.is_some() {
+                cx.emit(SidebarWorkspaceRequested {
+                    view: ServerView::Editor,
+                    editor_action: None,
                 });
             }
         }

@@ -125,8 +125,7 @@ pub use server::stream::project_stream_entries;
 // Used by the value-diff view to render the same RFC 7396 merge patch
 // document the Save path sends as JSON.MERGE — single source of truth.
 pub use server::stat::{
-    PersistenceNodeSnapshot, RedisKeySpaceStats, RedisMetrics, ReplicaInfo, alert_metric_label, get_metrics_cache,
-    load_persisted_metrics,
+    PersistenceNodeSnapshot, RedisMetrics, ReplicaInfo, alert_metric_label, get_metrics_cache, load_persisted_metrics,
 };
 pub use server::string::detect_and_decode;
 pub(crate) use server::value::json_merge_diff;

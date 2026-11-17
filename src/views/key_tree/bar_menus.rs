@@ -37,6 +37,23 @@ pub(super) struct FilterMenu {
 }
 
 impl FilterMenu {
+    pub(super) fn for_tree(tree: &ZedisKeyTree, cx: &App) -> Self {
+        let state = tree.server_state.read(cx);
+        Self {
+            server_state_clone: tree.server_state.clone(),
+            server_id_for_favorites: state.server_id().to_owned().into(),
+            recent_scope: recent_keys_scope(state.server_id(), state.db()),
+            query_mode: tree.state.query_mode,
+            regex_mode: tree.state.regex_mode,
+            type_filter: state.type_filter(),
+            module_types: state.module_types_seen(),
+            tag_filter_active: tree.state.selected_tag_filter,
+            show_key_tree_ttl: state.show_key_tree_ttl(),
+            ttl_filter: tree.state.selected_ttl_filter,
+            sort: tree.state.sort,
+        }
+    }
+
     /// The menu, top to bottom.
     pub(super) fn build(&self, menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
         let menu = self.lists(menu, window, cx);
@@ -391,6 +408,17 @@ pub(super) struct TreeMoreMenu {
 }
 
 impl TreeMoreMenu {
+    pub(super) fn for_tree(tree: &ZedisKeyTree, cx: &App) -> Self {
+        let list = tree.key_tree_list_state.read(cx).delegate();
+        Self {
+            readonly: tree.server_state.read(cx).readonly(),
+            enabled_multiple_selection: list.enabled_multiple_selection || !list.selected_items.is_empty(),
+            refresh_interval_sec: tree.state.refresh_interval_sec,
+            flat_view: tree.state.flat_view,
+            regex_mode: tree.state.regex_mode,
+        }
+    }
+
     /// The menu, top to bottom: the tree's own commands, then how it is
     /// read — flat, by regex.
     pub(super) fn build(&self, menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
