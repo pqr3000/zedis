@@ -43,7 +43,7 @@ use gpui_kit::component::{
     v_flex,
 };
 use std::time::Duration;
-use zedis_ui::{ZedisDialog, ZedisSkeletonLoading};
+use zedis_ui::{ZedisDialog, ZedisSkeletonLoading, panel_header};
 
 /// Soft staleness threshold for the "snapshot is old" info banner.
 const STALE_SAVE_SECS: i64 = 6 * 3600;
@@ -274,14 +274,8 @@ impl ZedisPersistence {
     // ── Header ─────────────────────────────────────────────────────────
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        h_flex()
-            .w_full()
-            .h(px(40.))
-            .px_4()
+        panel_header()
             .justify_between()
-            .items_center()
-            .border_b_1()
-            .border_color(theme.border)
             .child(
                 h_flex()
                     .gap_2()
@@ -333,7 +327,9 @@ impl ZedisPersistence {
 
     fn render_failure_banner(&self, message: SharedString, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let id = SharedString::from(format!("persistence-failure-{message}"));
         div()
+            .id(id)
             .mx_4()
             .my_2()
             .p_3()
@@ -394,7 +390,9 @@ impl ZedisPersistence {
     ) -> impl IntoElement {
         let theme = cx.theme();
         let value_color = accent.unwrap_or(theme.foreground);
+        let id = SharedString::from(format!("persistence-stat-{label}"));
         v_flex()
+            .id(id)
             .flex_1()
             .min_w(px(180.))
             .border_1()
@@ -732,7 +730,7 @@ impl ZedisPersistence {
                 )
                 .into_any_element(),
         );
-        for n in nodes {
+        for (ix, n) in nodes.iter().enumerate() {
             let last = if n.rdb_last_save_time <= 0 {
                 i18n_persistence(cx, "state_never").to_string()
             } else {
@@ -765,6 +763,7 @@ impl ZedisPersistence {
             };
             rows.push(
                 h_flex()
+                    .id(("persistence-node", ix))
                     .px_2()
                     .py_1()
                     .gap_2()
@@ -857,6 +856,7 @@ impl ZedisPersistence {
         };
 
         v_flex()
+            .id(SharedString::from(format!("persistence-action-{id}")))
             .flex_1()
             .min_w(px(280.))
             .border_1()

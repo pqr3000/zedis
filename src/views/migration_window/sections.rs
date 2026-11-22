@@ -68,6 +68,7 @@ impl ZedisMigrationWindow {
                 let progress_text = i18n_migration(cx, "unfinished_job_progress")
                     .replace("{count}", &cp.cursor.processed_count.to_string());
                 h_flex()
+                    .id(("migration-unfinished", ix))
                     .gap_2()
                     .items_center()
                     .justify_between()
@@ -616,11 +617,11 @@ impl ZedisMigrationWindow {
                     .min_h_0()
                     .border_1()
                     .border_color(theme.border)
-                    .rounded(px(4.))
+                    .rounded(theme.radius)
                     .px_2()
                     .py_1()
                     .overflow_y_scrollbar()
-                    .children(log_lines.iter().map(|line| {
+                    .children(log_lines.iter().enumerate().map(|(ix, line)| {
                         let color = match line.status {
                             LogStatus::Ok => theme.foreground,
                             LogStatus::Skipped => muted,
@@ -631,7 +632,10 @@ impl ZedisMigrationWindow {
                             text.push_str("    — ");
                             text.push_str(msg);
                         }
-                        Label::new(SharedString::from(text)).text_xs().text_color(color)
+                        Label::new(SharedString::from(text))
+                            .id(("migration-log", ix))
+                            .text_xs()
+                            .text_color(color)
                     })),
             )
     }
@@ -840,6 +844,7 @@ impl ZedisMigrationWindow {
             .map(|(ix, key)| {
                 let key_click = key.clone();
                 h_flex()
+                    .id(("migration-mismatch", ix))
                     .justify_between()
                     .items_center()
                     .gap_2()
@@ -860,7 +865,7 @@ impl ZedisMigrationWindow {
             .gap_1()
             .border_1()
             .border_color(theme.border)
-            .rounded(px(4.))
+            .rounded(theme.radius)
             .px_2()
             .py_1()
             .children(rows);
@@ -905,14 +910,15 @@ fn sample_block(sample_lines: Vec<SharedString>, cx: &App) -> AnyElement {
     let block = v_flex()
         .border_1()
         .border_color(theme.border)
-        .rounded(px(4.))
+        .rounded(theme.radius)
         .px_2()
         .py_1()
-        .children(
-            sample_lines
-                .into_iter()
-                .map(|k| Label::new(k).text_xs().text_color(theme.danger_foreground)),
-        );
+        .children(sample_lines.into_iter().enumerate().map(|(ix, k)| {
+            Label::new(k)
+                .id(("migration-sample", ix))
+                .text_xs()
+                .text_color(theme.danger_foreground)
+        }));
     if long {
         block.h(px(100.)).overflow_y_scrollbar().into_any_element()
     } else {

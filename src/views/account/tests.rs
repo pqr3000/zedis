@@ -30,11 +30,10 @@ use crate::connection::{
     BridgeDisposition, BridgeInvite, BridgeNewInvite, BridgeOrphans, BridgeOwned, BridgeOwnedItem, BridgeSignup,
 };
 use crate::test_support::init_ui;
-use chrono::{Duration, Utc};
 use gpui::{AnyWindowHandle, TestAppContext, size};
 use gpui_kit::component::Root;
-use gpui_kit::component::dialog::ANIMATION_DURATION;
 use gpui_kit::test::TestWindowExt;
+use jiff::{Span, Timestamp, tz::TimeZone};
 use std::sync::Mutex;
 use zedis_ui::ZedisSelectEvent;
 
@@ -574,7 +573,8 @@ fn an_administrator_s_token_expires_in_ninety_days_by_default(cx: &mut TestAppCo
     })
     .expect("the window is open");
     cx.run_until_parked();
-    let day = (Utc::now().date_naive() + Duration::days(ADMIN_TOKEN_DAYS)).format("%Y-%m-%d");
+    let day = (Timestamp::now().to_zoned_datetime(TimeZone::UTC).date() + Span::new().days(ADMIN_TOKEN_DAYS))
+        .strftime("%Y-%m-%d");
     assert_eq!(
         bridge.requests(),
         vec![format!("issue Some(\"ai\") laptop Some(\"{day}\")")]
@@ -605,13 +605,6 @@ fn click(cx: &mut TestAppContext, window: AnyWindowHandle, id: impl Into<SharedS
     cx.run_until_parked();
 }
 
-/// A dialog slides in on the real clock (gpui's `Animation` reads
-/// `Instant::now()`, which a test does not drive), so a click aimed at where
-/// a button was drawn mid-slide lands beside it. Wait for it to stop.
-fn let_the_dialog_land() {
-    std::thread::sleep(*ANIMATION_DURATION + std::time::Duration::from_millis(50));
-}
-
 /// What a deleted account kept to itself goes to the administrator who
 /// deletes it unless another answer is picked — and sharing it, which hands
 /// every account its saved passwords, is never what is picked for them.
@@ -630,7 +623,6 @@ fn a_deleted_account_s_own_go_to_the_administrator_unless_told_otherwise(cx: &mu
     })
     .expect("the window is open");
     click(cx, window, DELETE_ACCOUNT_ID);
-    let_the_dialog_land();
     click(cx, window, "zedis-dialog-ok");
     assert_eq!(bridge.requests(), vec![r#"delete bob HandTo("alice")"#]);
 
@@ -640,7 +632,6 @@ fn a_deleted_account_s_own_go_to_the_administrator_unless_told_otherwise(cx: &mu
     })
     .expect("the window is open");
     click(cx, window, DELETE_ACCOUNT_ID);
-    let_the_dialog_land();
     click(cx, window, SHARE_ID);
     click(cx, window, "zedis-dialog-ok");
     assert_eq!(bridge.requests().last().map(String::as_str), Some("delete bob Share"));
@@ -662,7 +653,6 @@ fn what_a_deleted_account_left_is_listed_and_settled(cx: &mut TestAppContext) {
     })
     .expect("the window is open");
     click(cx, window, format!("{SETTLE_ORPHANS_ID}-ghost"));
-    let_the_dialog_land();
     click(cx, window, "zedis-dialog-ok");
     assert_eq!(bridge.requests(), vec![r#"settle ghost HandTo("alice")"#]);
 }
@@ -741,7 +731,7 @@ fn the_audit_narrows_to_a_server_and_a_period(cx: &mut TestAppContext) {
     })
     .expect("the window is open");
     cx.run_until_parked();
-    let before = Utc::now().timestamp_millis();
+    let before = Timestamp::now().as_millisecond();
     click(cx, window, AUDIT_SEARCH_ID);
     let asked = bridge.audits.lock().expect("lock").last().cloned().expect("asked");
     assert_eq!(asked.server.as_deref(), Some("srv-2"));

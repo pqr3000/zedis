@@ -34,115 +34,8 @@ impl ZedisSearchManager {
             .unwrap_or_else(|| i18n_search(cx, "pick_index"));
         let indexes = self.indexes.clone();
 
-        h_flex()
-            .items_center()
-            .justify_between()
-            .px_4()
-            .h(px(40.))
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Button::new("search-back")
-                            .ghost()
-                            .small()
-                            .icon(IconName::ArrowLeft)
-                            .tooltip(back_to_editor_tooltip(cx))
-                            .on_click(|_, _w, cx| {
-                                cx.update_global::<ZedisGlobalStore, ()>(|store, cx| {
-                                    store.update(cx, |state, cx| state.go_to_view(ServerView::Editor, cx));
-                                });
-                            }),
-                    )
-                    .child(Icon::new(IconName::Search))
-                    .child(Label::new(title).text_color(cx.theme().foreground))
-                    .child(Label::new(index_count_label).text_color(muted).text_sm()),
-            )
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        // Index picker — DropdownButton's main button shows
-                        // the current selection (or a placeholder), and the
-                        // chevron opens the list of indexes from FT._LIST.
-                        // Actions carry the index into `indexes` rather
-                        // than the name itself so the derived Action enum
-                        // stays Copy.
-                        DropdownButton::new("search-index-picker")
-                            .button(
-                                Button::new("search-index-current")
-                                    .outline()
-                                    .small()
-                                    .label(current_label),
-                            )
-                            .dropdown_menu(move |menu, _w, _cx| {
-                                let mut menu = menu;
-                                for (idx, name) in indexes.iter().enumerate() {
-                                    let label = name.clone();
-                                    menu = menu.menu_element(
-                                        Box::new(SearchManagerAction::SelectIndex(idx as u32)),
-                                        move |_w, _cx| Label::new(label.clone()),
-                                    );
-                                }
-                                menu
-                            }),
-                    )
-                    .when(self.can_write_index(cx), |this| {
-                        // + New Index — opens the structured create form.
-                        // Available wherever writes are (also with zero
-                        // indexes) so the empty-state isn't a dead end.
-                        this.child(
-                            Button::new("search-new-index")
-                                .outline()
-                                .small()
-                                .icon(IconName::Plus)
-                                .tooltip(i18n_search(cx, "create_tooltip"))
-                                .disabled(self.creating_index)
-                                .on_click(cx.listener(|this, _, w, cx| this.open_create_dialog(w, cx))),
-                        )
-                    })
-                    .child(
-                        Button::new("search-refresh")
-                            .outline()
-                            .small()
-                            .icon(Icon::new(CustomIconName::RotateCw))
-                            .tooltip(i18n_search(cx, "refresh_tooltip"))
-                            .on_click(cx.listener(|this, _, _w, cx| this.refresh_indexes(cx))),
-                    )
-                    .child(
-                        // FT.EXPLAIN — the plan is valid in both modes (an
-                        // aggregation's query half is still a search query).
-                        Button::new("search-explain")
-                            .outline()
-                            .small()
-                            .label(i18n_search(cx, "explain_btn"))
-                            .tooltip(i18n_search(cx, "explain_tooltip"))
-                            .disabled(self.running_query || self.selected_index.is_none())
-                            .on_click(cx.listener(|this, _, _w, cx| this.run_plan(false, cx))),
-                    )
-                    .child(
-                        Button::new("search-profile")
-                            .outline()
-                            .small()
-                            .label(i18n_search(cx, "profile_btn"))
-                            .tooltip(i18n_search(cx, "profile_tooltip"))
-                            .disabled(self.running_query || self.selected_index.is_none())
-                            .on_click(cx.listener(|this, _, _w, cx| this.run_plan(true, cx))),
-                    )
-                    .child(
-                        Button::new("search-run")
-                            .small()
-                            .primary()
-                            .icon(IconName::Search)
-                            .label(i18n_search(cx, "run"))
-                            .disabled(self.running_query || self.selected_index.is_none())
-                            .on_click(cx.listener(|this, _, w, cx| this.run(w, cx))),
-                    ),
-            )
+        div()
+            .w_full()
             .on_action(cx.listener(|this, action: &SearchManagerAction, _w, cx| match action {
                 SearchManagerAction::SelectIndex(idx) => {
                     if let Some(name) = this.indexes.get(*idx as usize).cloned() {
@@ -150,6 +43,112 @@ impl ZedisSearchManager {
                     }
                 }
             }))
+            .child(
+                panel_header()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Button::new("search-back")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::ArrowLeft)
+                                    .tooltip(back_to_editor_tooltip(cx))
+                                    .on_click(|_, _w, cx| {
+                                        cx.update_global::<ZedisGlobalStore, ()>(|store, cx| {
+                                            store.update(cx, |state, cx| state.go_to_view(ServerView::Editor, cx));
+                                        });
+                                    }),
+                            )
+                            .child(Icon::new(IconName::Search))
+                            .child(Label::new(title).text_color(cx.theme().foreground))
+                            .child(Label::new(index_count_label).text_color(muted).text_sm()),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                // Index picker — DropdownButton's main button shows
+                                // the current selection (or a placeholder), and the
+                                // chevron opens the list of indexes from FT._LIST.
+                                // Actions carry the index into `indexes` rather
+                                // than the name itself so the derived Action enum
+                                // stays Copy.
+                                DropdownButton::new("search-index-picker")
+                                    .button(
+                                        Button::new("search-index-current")
+                                            .outline()
+                                            .small()
+                                            .label(current_label),
+                                    )
+                                    .dropdown_menu(move |menu, _w, _cx| {
+                                        let mut menu = menu;
+                                        for (idx, name) in indexes.iter().enumerate() {
+                                            let label = name.clone();
+                                            menu = menu.menu_element(
+                                                Box::new(SearchManagerAction::SelectIndex(idx as u32)),
+                                                move |_w, _cx| Label::new(label.clone()),
+                                            );
+                                        }
+                                        menu
+                                    }),
+                            )
+                            .when(self.can_write_index(cx), |this| {
+                                // + New Index — opens the structured create form.
+                                // Available wherever writes are (also with zero
+                                // indexes) so the empty-state isn't a dead end.
+                                this.child(
+                                    Button::new("search-new-index")
+                                        .outline()
+                                        .small()
+                                        .icon(IconName::Plus)
+                                        .tooltip(i18n_search(cx, "create_tooltip"))
+                                        .disabled(self.creating_index)
+                                        .on_click(cx.listener(|this, _, w, cx| this.open_create_dialog(w, cx))),
+                                )
+                            })
+                            .child(
+                                Button::new("search-refresh")
+                                    .outline()
+                                    .small()
+                                    .icon(Icon::new(CustomIconName::RotateCw))
+                                    .tooltip(i18n_search(cx, "refresh_tooltip"))
+                                    .on_click(cx.listener(|this, _, _w, cx| this.refresh_indexes(cx))),
+                            )
+                            .child(
+                                // FT.EXPLAIN — the plan is valid in both modes (an
+                                // aggregation's query half is still a search query).
+                                Button::new("search-explain")
+                                    .outline()
+                                    .small()
+                                    .label(i18n_search(cx, "explain_btn"))
+                                    .tooltip(i18n_search(cx, "explain_tooltip"))
+                                    .disabled(self.running_query || self.selected_index.is_none())
+                                    .on_click(cx.listener(|this, _, _w, cx| this.run_plan(false, cx))),
+                            )
+                            .child(
+                                Button::new("search-profile")
+                                    .outline()
+                                    .small()
+                                    .label(i18n_search(cx, "profile_btn"))
+                                    .tooltip(i18n_search(cx, "profile_tooltip"))
+                                    .disabled(self.running_query || self.selected_index.is_none())
+                                    .on_click(cx.listener(|this, _, _w, cx| this.run_plan(true, cx))),
+                            )
+                            .child(
+                                Button::new("search-run")
+                                    .small()
+                                    .primary()
+                                    .icon(IconName::Search)
+                                    .label(i18n_search(cx, "run"))
+                                    .disabled(self.running_query || self.selected_index.is_none())
+                                    .on_click(cx.listener(|this, _, w, cx| this.run(w, cx))),
+                            ),
+                    ),
+            )
     }
 
     /// Compact schema panel: one row per indexed field with type chip
@@ -534,8 +533,10 @@ impl ZedisSearchManager {
     /// reusable chip component yet.
     pub(super) fn chip(&self, text: SharedString, color: gpui::Hsla, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let bg = color.opacity(0.18);
+        let id = SharedString::from(format!("search-chip-{text}"));
         let _ = cx;
         div()
+            .id(id)
             .px_2()
             .rounded_sm()
             .bg(bg)
@@ -653,6 +654,7 @@ impl ZedisSearchManager {
             }
             elements.push(
                 h_flex()
+                    .id(SharedString::from(format!("search-param-row-{name}")))
                     .gap_2()
                     .items_center()
                     .child(
@@ -1331,13 +1333,14 @@ impl ZedisSearchManager {
                 );
             }
         }
-        for hit in &r.hits {
+        for (hit_ix, hit) in r.hits.iter().enumerate() {
             let id = hit.doc_id.clone();
             let id_for_open = SharedString::from(id.clone());
             let mut field_lines: Vec<gpui::AnyElement> = Vec::new();
-            for (k, v) in &hit.fields {
+            for (field_ix, (k, v)) in hit.fields.iter().enumerate() {
                 field_lines.push(
                     h_flex()
+                        .id(("search-hit-field", field_ix))
                         .gap_2()
                         .items_start()
                         .child(Label::new(k.clone()).text_xs().text_color(muted))
@@ -1347,6 +1350,7 @@ impl ZedisSearchManager {
             }
             rows.push(
                 v_flex()
+                    .id(("search-hit", hit_ix))
                     .gap_1()
                     .px_3()
                     .py_2()
@@ -1428,22 +1432,26 @@ fn render_highlighted_value(value: &str, mark_bg: gpui::Hsla, fg: gpui::Hsla) ->
             .into_any_element();
     }
     let mut parts: Vec<gpui::AnyElement> = Vec::new();
+    let mut part_ix = 0usize;
     let mut rest = value;
     while let Some(start) = rest.find(open) {
         let before = &rest[..start];
         if !before.is_empty() {
             parts.push(
                 Label::new(before.to_string())
+                    .id(("hl-before", part_ix))
                     .text_sm()
                     .text_color(fg)
                     .into_any_element(),
             );
+            part_ix += 1;
         }
         let after_open = &rest[start + open.len()..];
         if let Some(end) = after_open.find(close) {
             let marked = &after_open[..end];
             parts.push(
                 div()
+                    .id(("hl-mark", part_ix))
                     .px_0p5()
                     .rounded_sm()
                     .bg(mark_bg)
@@ -1455,10 +1463,12 @@ fn render_highlighted_value(value: &str, mark_bg: gpui::Hsla, fg: gpui::Hsla) ->
                     )
                     .into_any_element(),
             );
+            part_ix += 1;
             rest = &after_open[end + close.len()..];
         } else {
             parts.push(
                 Label::new(after_open.to_string())
+                    .id(("hl-tail", part_ix))
                     .text_sm()
                     .text_color(fg)
                     .into_any_element(),

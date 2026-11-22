@@ -47,7 +47,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::Duration;
 use web_time::Instant;
-use zedis_ui::ZedisDialog;
+use zedis_ui::{ZedisDialog, panel_header};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -706,6 +706,7 @@ impl ZedisServerLoad {
         let stripe_bg = theme.table_even;
         let warning = theme.warning;
         let yellow = theme.yellow;
+        let mono = get_mono_font_family();
         let mut list = v_flex().w_full().child(header);
         for (row_ix, r) in display.into_iter().enumerate() {
             let is_stripe = row_ix % 2 != 0;
@@ -716,11 +717,13 @@ impl ZedisServerLoad {
 
             list = list.child(
                 h_flex()
+                    .id(("server-load-row", row_ix))
                     .w_full()
                     .px_3()
                     .py_1()
                     .gap_2()
                     .items_center()
+                    .font_family(mono.clone())
                     .when(is_stripe && !(hot_rate || hot_avg), |this| this.bg(stripe_bg))
                     .when(hot_rate || hot_avg, |this| this.bg(warning.opacity(0.08)))
                     .child(
@@ -811,15 +814,9 @@ impl Render for ZedisServerLoad {
 
         v_flex()
             .size_full()
-            .font_family(get_mono_font_family())
             .child(
-                h_flex()
-                    .items_center()
+                panel_header()
                     .gap_2()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
                     .child(
                         Button::new("server-load-back")
                             .ghost()

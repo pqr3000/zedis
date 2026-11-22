@@ -58,7 +58,7 @@ use gpui_kit::component::{
 use rust_i18n::t;
 use std::time::Duration;
 use tracing::error;
-use zedis_ui::{TextColumn, ZedisDialog, ZedisTextTable, fitted_table};
+use zedis_ui::{TextColumn, ZedisDialog, ZedisTextTable, fitted_table, panel_header};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -611,13 +611,8 @@ impl gpui::Render for ZedisAclManager {
                 .label(i18n_acl(cx, key))
                 .on_click(cx.listener(move |this, _, _w, cx| this.set_tab(tab, cx)))
         };
-        let header = h_flex()
-            .items_center()
+        let header = panel_header()
             .justify_between()
-            .px_4()
-            .h(px(40.))
-            .border_b_1()
-            .border_color(cx.theme().border)
             .child(
                 h_flex()
                     .gap_2()
@@ -785,19 +780,21 @@ impl gpui::Render for ZedisAclManager {
                     )
                     .into_any_element()
             } else {
-                fitted_table(
-                    &self.log_table,
-                    DataTable::new(&self.log_table)
-                        .stripe(true)
-                        .bordered(false)
-                        .scrollbar_visible(true, true),
-                )
-                .into_any_element()
+                div()
+                    .size_full()
+                    .font_family(get_mono_font_family())
+                    .child(fitted_table(
+                        &self.log_table,
+                        DataTable::new(&self.log_table)
+                            .stripe(true)
+                            .bordered(false)
+                            .scrollbar_visible(true, true),
+                    ))
+                    .into_any_element()
             };
             return v_flex()
                 .size_full()
                 .overflow_hidden()
-                .font_family(get_mono_font_family())
                 .child(header)
                 .child(div().flex_1().w_full().min_h_0().child(log_body))
                 .into_any_element();
@@ -1015,8 +1012,13 @@ impl ZedisAclManager {
             // what you read here is what you can paste into the editor.
             .when(!user.selectors.is_empty(), |this| {
                 let mut groups = v_flex().gap_0p5().flex_1().min_w_0();
-                for selector in &user.selectors {
-                    groups = groups.child(Label::new(selector.to_rule_token()).text_xs().whitespace_normal());
+                for (sel_ix, selector) in user.selectors.iter().enumerate() {
+                    groups = groups.child(
+                        Label::new(selector.to_rule_token())
+                            .id(("acl-selector", sel_ix))
+                            .text_xs()
+                            .whitespace_normal(),
+                    );
                 }
                 this.child(
                     h_flex()

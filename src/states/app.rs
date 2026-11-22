@@ -24,11 +24,13 @@ use crate::connection::{
 use crate::error::Error;
 #[cfg(not(target_family = "wasm"))]
 use crate::helpers::set_configured_proxy;
-use crate::helpers::{ConfigRecovery, DEFAULT_UI_FONT_SIZE, UpdateInfo, load_config_with_recovery};
+use crate::helpers::{
+    ConfigRecovery, DEFAULT_EDITOR_FONT_SIZE, DEFAULT_UI_FONT_SIZE, EDITOR_FONT_SIZE_MAX, EDITOR_FONT_SIZE_MIN,
+    UpdateInfo, load_config_with_recovery,
+};
 use crate::helpers::{DEFAULT_DATE_FORMAT, TimeZonePref};
 use crate::startup::is_nightly_build;
 use crate::states::i18n_common;
-use chrono::Local;
 use gpui::{Action, App, AppContext, Bounds, Context, Entity, EventEmitter, Global, Pixels, SharedString, Window};
 use gpui_kit::component::ThemeMode;
 use schemars::JsonSchema;
@@ -399,6 +401,10 @@ pub struct ZedisAppState {
     /// over the legacy `font_size` enum; `None` falls back to it, then to
     /// gpui's 16px default. Additive so old configs migrate silently.
     font_rem_px: Option<f32>,
+    /// Value/code editor font size in px from Settings (`10..=28`).
+    /// `None` falls back to [`DEFAULT_EDITOR_FONT_SIZE`] (13 px).
+    #[serde(default)]
+    editor_font_size_px: Option<f32>,
     /// User-chosen UI font family (all non-mono text). Empty/None ⇒ the OS
     /// system UI font. A single family name, never a comma-separated stack.
     ui_font_family: Option<String>,
@@ -456,6 +462,9 @@ pub struct ZedisAppState {
     /// is skipped (cheaper scans on large dbs) and no chip is rendered.
     /// Defaults to `true`.
     show_key_tree_ttl: Option<bool>,
+    /// Whether the key tree shows keys as a flat list (`true`) instead of a
+    /// nested folder tree (unset / `false`, the default).
+    key_tree_flat_view: Option<bool>,
     /// When `true`, the Live Monitor shows the commands Zedis's own
     /// connections send (the heartbeat's `INFO`, the key tree's `SCAN`…)
     /// among everyone else's. Defaults to `false`: on a quiet server they
@@ -780,6 +789,15 @@ impl ZedisAppState {
         // and clippy forbids `==` on f32.
         self.font_rem_px = px.filter(|v| (*v - DEFAULT_UI_FONT_SIZE).abs() >= f32::EPSILON);
     }
+    /// Value/code editor font size in pixels, `None` when using the default (13 px).
+    pub fn editor_font_size_px(&self) -> Option<f32> {
+        self.editor_font_size_px
+    }
+    pub fn set_editor_font_size_px(&mut self, px: Option<f32>) {
+        self.editor_font_size_px = px
+            .map(|v| v.round().clamp(EDITOR_FONT_SIZE_MIN, EDITOR_FONT_SIZE_MAX))
+            .filter(|v| (*v - DEFAULT_EDITOR_FONT_SIZE).abs() >= f32::EPSILON);
+    }
     /// UI font family, `None` when unset or blank (falls back to system).
     pub fn ui_font_family(&self) -> Option<String> {
         self.ui_font_family.clone().filter(|s| !s.trim().is_empty())
@@ -1025,6 +1043,13 @@ impl ZedisAppState {
     }
     pub fn set_show_key_tree_ttl(&mut self, enabled: bool) {
         self.show_key_tree_ttl = Some(enabled);
+    }
+    /// Whether the key tree opens in flat-list mode, as it was last left.
+    pub fn key_tree_flat_view(&self) -> bool {
+        self.key_tree_flat_view.unwrap_or(false)
+    }
+    pub fn set_key_tree_flat_view(&mut self, flat: bool) {
+        self.key_tree_flat_view = Some(flat);
     }
     pub fn monitor_show_own_commands(&self) -> bool {
         self.monitor_show_own_commands.unwrap_or(false)
@@ -1294,6 +1319,7 @@ mod upgrade_fixtures {
         assert!(state.window_placements.is_empty());
         assert!(state.last_db.is_empty());
         assert_eq!(state.multi_search_scope, MultiSearchScope::default());
+        assert!(!state.key_tree_flat_view());
     }
 
     #[test]
@@ -1327,6 +1353,22 @@ mod upgrade_fixtures {
             assert_eq!(again.key_tree_width, state.key_tree_width);
             assert_eq!(again.route_token, state.route_token);
         }
+    }
+
+    #[test]
+    fn key_tree_flat_view_round_trips_through_toml() {
+        let mut state = super::ZedisAppState::default();
+        assert!(!state.key_tree_flat_view());
+
+        state.set_key_tree_flat_view(true);
+        let written = toml::to_string(&state).expect("serialize");
+        let again: super::ZedisAppState = toml::from_str(&written).expect("re-parse");
+        assert!(again.key_tree_flat_view());
+
+        state.set_key_tree_flat_view(false);
+        let written = toml::to_string(&state).expect("serialize");
+        let again: super::ZedisAppState = toml::from_str(&written).expect("re-parse");
+        assert!(!again.key_tree_flat_view());
     }
 }
 

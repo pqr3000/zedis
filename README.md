@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/d7007ecf-bbfd-4e68-bbaf-437091f711e7
 - 🧠 **Reads your values** — decompresses and decodes on its own: JSON, Protobuf, MessagePack, JWT, images and more, with a viewer for every Redis type and module.
 - 📊 **Observability in the same window** — live metrics, a memory analyzer, hot keys, slow log, `MONITOR` and cluster health.
 - 🔐 **Safe on production** — Prod connections start write-locked, a destructive command there asks for the server's name, secrets are encrypted per machine, and there is no telemetry.
-- 🌐 **Connects to what you actually run** — TLS, SSH, Cluster, Sentinel; Redis and Valkey as first-class; Dragonfly, Garnet, proxies and managed clouds grey out what they lack, with the reason.
+- 🌐 **Connects to what you actually run** — TLS, SSH, Cluster, Sentinel; Redis and Valkey as first-class; Dragonfly, Garnet, KiviDB, proxies and managed clouds grey out what they lack, with the reason.
 - ⌨️ **For people who live in Redis** — ⌘K, a redis-cli with completion, an AI command assistant, copy and diff across servers, and the same app in the browser.
 
 Browse connections, databases, folders and keys in one continuous sidebar tree with a single scrollbar and no inline search bars. Expanding or folding a branch keeps the value on the right; clicking a key opens its database's editor. Each database retains its own search, scan progress and expanded folders until the window closes. Drag the sidebar’s right edge to resize the tree. The window remembers its width. Ctrl/⌘+F opens search for the focused database. The ⋯ menu on an expanded database offers filters, favorites and recent keys. Normal connection opens and session restores use this layout; Ctrl/⌘-click retains the existing tab preference.
@@ -151,7 +151,7 @@ Open <http://localhost:7379> and create the administrator with the setup token f
 
 ## 🔀 Redis and Valkey
 
-Valkey is first-class, not a compatibility mode. Whether a version-dependent feature is available is decided by Redis's and Valkey's own version numbers, separately, so a server is never sent a command it did not ship. What only Valkey has — `COMMANDLOG`, atomic slot migration, multiple databases in cluster — has a panel. Copy works both ways even though the two cannot read each other's `DUMP` payloads. CI runs Redis 6.2–8 and Valkey 8.0–9.1 on every change. Dragonfly and Garnet connect too: each is shown under its own name and version, and the commands it does not have are detected and left out (Garnet, for one, has no streams). CI also runs a short connection test against both; neither is held to the full test matrix.
+Valkey is first-class, not a compatibility mode. Whether a version-dependent feature is available is decided by Redis's and Valkey's own version numbers, separately, so a server is never sent a command it did not ship. What only Valkey has — `COMMANDLOG`, atomic slot migration, multiple databases in cluster — has a panel. Copy works both ways even though the two cannot read each other's `DUMP` payloads. CI runs Redis 6.2–8 and Valkey 8.0–9.1 on every change. Dragonfly, Garnet and KiviDB connect too: each is shown under its own name and version, and the commands it does not have are detected and left out (Garnet, for one, has no streams). CI also runs a short connection test against each; none is held to the full test matrix.
 
 📖 **[Compatibility matrix →](./docs/REDIS_VALKEY.md)**
 

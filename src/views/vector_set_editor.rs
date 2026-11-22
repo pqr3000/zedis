@@ -432,7 +432,9 @@ impl ZedisVectorSetEditor {
     fn render_meta(&self, data: &VectorSetData, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let chip = |label: SharedString, value: String| {
+            let id = SharedString::from(format!("vset-meta-{label}"));
             h_flex()
+                .id(id)
                 .gap_1()
                 .items_baseline()
                 .child(Label::new(label).text_xs().text_color(muted))
@@ -577,6 +579,7 @@ impl ZedisVectorSetEditor {
                     .child(
                         div().flex_1().min_w_0().overflow_hidden().child(
                             Label::new(text)
+                                .font_family(get_mono_font_family())
                                 .text_xs()
                                 .text_color(muted)
                                 .whitespace_nowrap()
@@ -620,7 +623,12 @@ impl ZedisVectorSetEditor {
                             .min_w_0()
                             .child(Label::new(element.clone()).text_xs().font_semibold()),
                     )
-                    .child(Label::new(format!("{score:.4}")).text_xs().text_color(muted))
+                    .child(
+                        Label::new(format!("{score:.4}"))
+                            .font_family(get_mono_font_family())
+                            .text_xs()
+                            .text_color(muted),
+                    )
                     // WITHATTRIBS (8.2+): the attributes the FILTER matched on.
                     .when_some(neighbour.attrs.clone(), |this, attrs| {
                         this.child(
@@ -752,13 +760,7 @@ impl Render for ZedisVectorSetEditor {
                 .into_any_element()
         };
 
-        v_flex()
-            .size_full()
-            .font_family(get_mono_font_family())
-            .gap_3()
-            .p_3()
-            .child(header)
-            .child(body)
+        v_flex().size_full().gap_3().p_3().child(header).child(body)
     }
 }
 

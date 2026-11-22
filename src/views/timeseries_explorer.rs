@@ -44,7 +44,7 @@ use gpui_kit::component::{
     v_flex,
 };
 use std::sync::Arc;
-use zedis_ui::{TextColumn, ZedisTextTable, fitted_table};
+use zedis_ui::{TextColumn, ZedisTextTable, fitted_table, panel_header};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -373,6 +373,7 @@ impl ZedisTimeSeriesExplorer {
         for (index, series) in self.series.iter().take(MAX_PLOTTED).enumerate() {
             legend = legend.child(
                 h_flex()
+                    .id(("ts-legend", index))
                     .items_center()
                     .gap_1()
                     .child(
@@ -409,13 +410,8 @@ impl Render for ZedisTimeSeriesExplorer {
             })));
         }
 
-        let bar = h_flex()
-            .w_full()
-            .pb_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
+        let bar = panel_header()
             .gap_2()
-            .items_center()
             // The way back and the page's name, as on every other tool page:
             // without them this one opened straight onto a filter box.
             .child(

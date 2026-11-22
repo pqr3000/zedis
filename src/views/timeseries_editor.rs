@@ -197,11 +197,18 @@ impl ZedisTimeSeriesEditor {
     fn render_meta(&self, info: &TsInfo, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let chip = |label: SharedString, value: String| {
+            let id = SharedString::from(format!("ts-chip-{label}"));
             h_flex()
+                .id(id)
                 .gap_1()
                 .items_baseline()
                 .child(Label::new(label).text_xs().text_color(muted))
-                .child(Label::new(value).text_xs().font_semibold())
+                .child(
+                    Label::new(value)
+                        .font_family(get_mono_font_family())
+                        .text_xs()
+                        .font_semibold(),
+                )
         };
 
         let mut row = h_flex().flex_wrap().gap_x_4().gap_y_1().items_center();
@@ -214,9 +221,10 @@ impl ZedisTimeSeriesEditor {
         if info.chunk_count > 0 {
             row = row.child(chip(i18n_timeseries(cx, "chunks"), info.chunk_count.to_string()));
         }
-        for (k, v) in info.labels.iter() {
+        for (ix, (k, v)) in info.labels.iter().enumerate() {
             row = row.child(
                 div()
+                    .id(("ts-label", ix))
                     .px_2()
                     .py_0p5()
                     .rounded_full()
@@ -238,6 +246,7 @@ impl ZedisTimeSeriesEditor {
             let destination = rule.destination.clone();
             rules = rules.child(
                 h_flex()
+                    .id(("ts-rule", index))
                     .items_center()
                     .gap_2()
                     .child(Label::new(i18n_timeseries(cx, "rule")).text_xs().text_color(muted))
@@ -695,13 +704,7 @@ impl Render for ZedisTimeSeriesEditor {
                 .into_any_element()
         };
 
-        v_flex()
-            .size_full()
-            .font_family(get_mono_font_family())
-            .gap_3()
-            .p_3()
-            .child(header)
-            .child(body)
+        v_flex().size_full().gap_3().p_3().child(header).child(body)
     }
 }
 

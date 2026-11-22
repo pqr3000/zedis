@@ -98,15 +98,11 @@ impl ZedisKeyTree {
     }
 
     pub(crate) fn sidebar_row_selected(&self, index: usize, cx: &App) -> bool {
-        let state = self.server_state.read(cx);
-        !state.is_background()
-            && self
-                .key_tree_list_state
-                .read(cx)
-                .delegate()
-                .items
-                .get(index)
-                .is_some_and(|item| !item.is_folder && state.key().as_ref() == Some(&item.id))
+        let delegate = self.key_tree_list_state.read(cx).delegate();
+        delegate
+            .items
+            .get(index)
+            .is_some_and(|item| delegate.is_active_row(item, cx))
     }
     pub(crate) fn sidebar_row_count(&self, cx: &App) -> usize {
         self.key_tree_list_state.read(cx).delegate().items.len()
@@ -166,10 +162,6 @@ impl ZedisKeyTree {
     }
 
     pub(crate) fn prepare_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<usize> {
-        if std::mem::take(&mut self.state.clear_selection) {
-            self.key_tree_list_state
-                .update(cx, |state, cx| state.set_selected_index(None, window, cx));
-        }
         if let Some(true) = self.should_enter_add_key_mode.take() {
             self.handle_add_key(window, cx);
         }

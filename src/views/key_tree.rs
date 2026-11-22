@@ -136,8 +136,10 @@ struct KeyTreeState {
     /// reveal. Resolved to a row index once the tree finishes rebuilding —
     /// at selection time the row does not exist yet.
     pending_scroll_key: Option<SharedString>,
-    /// Whether to clear the list selection on the next render (requires window)
-    clear_selection: bool,
+    /// Pending `ListState` selection update applied on the next render
+    /// (requires `Window`): `Some(None)` clears transient selection, while
+    /// `Some(Some(ix))` restores it onto the selected folder after a rebuild.
+    pending_selected_index: Option<Option<IndexPath>>,
     /// Refresh interval in seconds
     refresh_interval_sec: u32,
     /// (keyword, query_mode) the displayed tree was last scanned for.
@@ -304,6 +306,21 @@ impl ZedisKeyTree {
         }
     }
 
+    pub(super) fn set_selected_folder(&mut self, folder: Option<SharedString>, cx: &mut Context<Self>) {
+        let changed = self.key_tree_list_state.update(cx, |state, cx| {
+            let delegate = state.delegate_mut();
+            if delegate.selected_folder == folder {
+                return false;
+            }
+            delegate.selected_folder = folder;
+            cx.notify();
+            true
+        });
+        if changed {
+            cx.notify();
+        }
+    }
+
     /// Put the caret in the keyword filter (`EditorAction::Search` / ⌘F).
     pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.external_visibility.is_some() {
@@ -432,6 +449,7 @@ impl ZedisKeyTree {
                     // Remember the target: the tree rebuilds asynchronously, so
                     // its row index is only knowable once the new item list
                     // lands (see the rebuild callback in `update_key_tree`).
+                    this.set_selected_folder(None, cx);
                     this.state.pending_scroll_key = Some(key.clone());
                     this.update_expand(key.clone(), cx);
                 }
@@ -515,8 +533,24 @@ impl ZedisKeyTree {
             readonly,
             server_state: server_state.clone(),
             menu_row: Default::default(),
+            selected_folder: None,
         };
         let key_tree_list_state = cx.new(|cx| ListState::new(delegate, window, cx));
+        subscriptions.push(cx.on_focus_out(&focus_handle, window, |this, _event, window, cx| {
+            if window.has_active_dialog(cx) {
+                return;
+            }
+            let delegate = this.key_tree_list_state.read(cx).delegate();
+            if delegate.menu_row.borrow().is_some() || delegate.selected_folder.is_none() {
+                return;
+            }
+            this.key_tree_list_state.update(cx, |state, cx| {
+                state.delegate_mut().selected_folder = None;
+                state.set_selected_index(None, window, cx);
+                cx.notify();
+            });
+            cx.notify();
+        }));
         subscriptions.push(cx.subscribe(&key_tree_list_state, |view, _, event, cx| match event {
             ListEvent::Select(ix) => {
                 view.select_item_by_index(ix, false, cx);
@@ -539,11 +573,14 @@ impl ZedisKeyTree {
             }
         }));
 
+        let flat_view = cx.global::<ZedisGlobalStore>().read(cx).key_tree_flat_view();
+
         let mut this = Self {
             focus_handle,
             state: KeyTreeState {
                 query_mode,
                 regex_mode,
+                flat_view,
                 server_id: server_id.into(),
                 refresh_interval_sec,
                 expanded_items: AHashSet::with_capacity(EXPANDED_ITEMS_INITIAL_CAPACITY),
@@ -612,7 +649,11 @@ impl ZedisKeyTree {
     }
 
     fn reset(&mut self, cx: &mut Context<Self>) {
-        self.state = KeyTreeState::default();
+        let flat_view = cx.global::<ZedisGlobalStore>().read(cx).key_tree_flat_view();
+        self.state = KeyTreeState {
+            flat_view,
+            ..Default::default()
+        };
         // Picks are key names, and a rebuild keeps the ones that still have
         // a row — so another server or database, which may well have keys of
         // the same names, has to start with none.
@@ -648,7 +689,8 @@ impl ZedisKeyTree {
         // scroll: the row is already there, or it never will be. Settle it
         // now rather than let the next SCAN page jump the list, and clear any
         // transient list selection from an earlier row click (#262).
-        self.state.clear_selection = true;
+        self.set_selected_folder(None, cx);
+        self.state.pending_selected_index = Some(None);
         if let Some(key) = self.state.pending_scroll_key.take() {
             let index = self.key_tree_list_state.update(cx, |state, _cx| {
                 let delegate = state.delegate_mut();
@@ -968,16 +1010,30 @@ impl ZedisKeyTree {
                     if result.is_empty() && !preserve_expand {
                         view.reset_expand(cx);
                     }
-                    view.state.clear_selection = true;
                     cx.notify();
                 });
-                let _ = handle.update(cx, |this, cx| {
-                    this.delegate_mut().items = result;
-                    this.delegate_mut().retain_selection();
-                    if let Some(row) = scroll_row {
-                        this.delegate_mut().range_anchor = Some(row);
-                    }
-                    this.delegate_mut().readonly = readonly;
+                let folder_row = handle
+                    .update(cx, |this, cx| {
+                        let delegate = this.delegate_mut();
+                        delegate.items = result;
+                        delegate.retain_selection();
+                        if let Some(row) = scroll_row {
+                            delegate.range_anchor = Some(row);
+                        }
+                        delegate.readonly = readonly;
+                        let folder_row = delegate.selected_folder.as_ref().and_then(|folder| {
+                            delegate
+                                .items
+                                .iter()
+                                .position(|item| item.is_folder && &item.id == folder)
+                        });
+                        cx.notify();
+                        folder_row
+                    })
+                    .ok()
+                    .flatten();
+                let _ = view_handle.update(cx, |view: &mut ZedisKeyTree, cx| {
+                    view.state.pending_selected_index = Some(folder_row.map(IndexPath::new));
                     cx.notify();
                 });
             })
@@ -1073,9 +1129,12 @@ impl ZedisKeyTree {
         // Synthetic "Load more" row → resume the folder scan rather than
         // selecting/expanding a key.
         if let Some(prefix) = load_more {
-            self.server_state.update(cx, |state, cx| {
-                state.load_more_prefix(prefix, cx);
-            });
+            self.set_selected_folder(None, cx);
+            if toggle {
+                self.server_state.update(cx, |state, cx| {
+                    state.load_more_prefix(prefix, cx);
+                });
+            }
             return;
         }
         self.select_item(id, is_folder, toggle, is_expanded, cx);
@@ -1090,10 +1149,17 @@ impl ZedisKeyTree {
         cx: &mut Context<Self>,
     ) {
         if is_folder {
+            let multi_active = self.key_tree_list_state.read(cx).delegate().is_multi_selecting();
+            if !multi_active {
+                self.set_selected_folder(Some(item_id.clone()), cx);
+            }
+            // Arrow navigation (`ListEvent::Select`, `toggle == false`) only moves
+            // selection onto the folder without auto-expanding or scanning it.
+            // Click and Enter (`ListEvent::Confirm`, `toggle == true`) toggle it.
+            if !toggle {
+                return;
+            }
             if is_expanded {
-                if !toggle {
-                    return;
-                }
                 // Collapse a folder shown open — whether expanded explicitly
                 // or auto-opened as a single-child chain. Suppress the
                 // auto-expand so the collapse sticks instead of being reopened
@@ -1111,6 +1177,7 @@ impl ZedisKeyTree {
             }
             self.update_key_tree(true, cx);
         } else {
+            self.set_selected_folder(None, cx);
             let is_selected = self.server_state.read(cx).key().as_ref() == Some(&item_id);
             // Select Key
             if !is_selected {

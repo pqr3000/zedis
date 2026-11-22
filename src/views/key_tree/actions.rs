@@ -18,11 +18,11 @@
 
 use super::key_actions::{
     clear_favorites, clear_recent_keys, delete_key, delete_picks, edit_key_tag, export_folder, export_key,
-    export_picks, persist_folder, persist_picks, set_ttl_folder, set_ttl_key, set_ttl_picks, tag_picks,
+    export_picks, persist_folder, persist_picks, picked_keys, set_ttl_folder, set_ttl_key, set_ttl_picks, tag_picks,
     toggle_favorite,
 };
 use super::*;
-use crate::states::ModuleTypeId;
+use crate::states::{ModuleTypeId, update_app_state_and_save_quiet};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Action)]
 pub(crate) enum KeyTreeAction {
@@ -111,9 +111,9 @@ impl Render for ZedisKeyTree {
                 state.scroll_to_item(scroll_to_index, ScrollStrategy::Top, window, cx);
             });
         }
-        if std::mem::take(&mut self.state.clear_selection) {
+        if let Some(target) = self.state.pending_selected_index.take() {
             self.key_tree_list_state.update(cx, |state, cx| {
-                state.set_selected_index(None, window, cx);
+                state.set_selected_index(target, window, cx);
             });
         }
         if let Some(true) = self.should_enter_add_key_mode.take() {
@@ -267,7 +267,14 @@ pub(super) fn on_tree_action(
             }
         }
         KeyTreeAction::ToggleFlatView => {
-            this.state.flat_view = !this.state.flat_view;
+            let flat = !this.state.flat_view;
+            this.state.flat_view = flat;
+            if flat {
+                this.set_selected_folder(None, cx);
+            }
+            update_app_state_and_save_quiet(cx, "save_key_tree_flat_view", move |state, _| {
+                state.set_key_tree_flat_view(flat);
+            });
             this.update_key_tree(true, cx);
         }
         KeyTreeAction::ToggleRegexMode => {
@@ -356,6 +363,9 @@ pub(super) fn on_tree_action(
             });
         }
         KeyTreeAction::DeleteFolder(id) => {
+            if !this.server_state.read(cx).can(Capability::DeleteFolder) {
+                return;
+            }
             folder_delete::open_folder_delete_dialog(this, id.clone(), window, cx);
         }
         KeyTreeAction::PersistMultipleKeys => persist_picks(this, window, cx),
@@ -389,20 +399,60 @@ pub(super) fn on_editor_action(
             this.focus_search(window, cx);
         }
         EditorAction::Delete => {
-            // `cmd-backspace` while the tree is focused deletes the
-            // current selection. `EditorAction::Delete` is otherwise
-            // only handled by the editor view (a sibling), so it never
-            // reached us via focus-tree dispatch. Reuse the tree's own
-            // delete-confirm flow: batch when multi-select has picks,
-            // else the selected key.
-            let multi = {
+            // `cmd-backspace` (or custom `delete_key`) while the tree is
+            // focused deletes the current selection: multi-select picks first,
+            // then a selected folder, else the open key in the editor.
+            let (multi, selected_folder) = {
                 let delegate = this.key_tree_list_state.read(cx).delegate();
-                !delegate.selected_items.is_empty()
+                (!delegate.selected_items.is_empty(), delegate.selected_folder.clone())
             };
             if multi {
                 window.dispatch_action(Box::new(KeyTreeAction::DeleteMultipleKeys), cx);
+            } else if let Some(folder) = selected_folder {
+                if this.server_state.read(cx).can(Capability::DeleteFolder) {
+                    window.dispatch_action(Box::new(KeyTreeAction::DeleteFolder(folder)), cx);
+                }
             } else if let Some(key) = this.server_state.read(cx).key() {
                 window.dispatch_action(Box::new(KeyTreeAction::DeleteKey(key)), cx);
+            }
+        }
+        EditorAction::DeleteWithoutConfirm => {
+            let (server_id, open_key, can_delete_key, can_delete_keys, can_delete_folder) = {
+                let state = this.server_state.read(cx);
+                (
+                    state.server_id().to_string(),
+                    state.key(),
+                    state.can(Capability::DeleteKey),
+                    state.can(Capability::DeleteKeys),
+                    state.can(Capability::DeleteFolder),
+                )
+            };
+            let high_risk = get_server(&server_id).is_ok_and(|server| server.is_high_risk_tag());
+            let selected_folder = this.key_tree_list_state.read(cx).delegate().selected_folder.clone();
+            let keys = picked_keys(this, cx);
+            if !keys.is_empty() {
+                if high_risk {
+                    window.dispatch_action(Box::new(KeyTreeAction::DeleteMultipleKeys), cx);
+                } else if can_delete_keys {
+                    this.server_state.update(cx, |state, cx| {
+                        state.unlink_keys(keys, cx);
+                    });
+                }
+            } else if let Some(folder) = selected_folder {
+                // Folder deletion scans the whole keyspace and never enters the
+                // recycle bin, so `delete_key = "...!"` still opens the
+                // count-and-confirm dialog.
+                if can_delete_folder {
+                    window.dispatch_action(Box::new(KeyTreeAction::DeleteFolder(folder)), cx);
+                }
+            } else if let Some(key) = open_key {
+                if high_risk {
+                    window.dispatch_action(Box::new(KeyTreeAction::DeleteKey(key)), cx);
+                } else if can_delete_key {
+                    this.server_state.update(cx, |state, cx| {
+                        state.delete_key(key, cx);
+                    });
+                }
             }
         }
         _ => {
@@ -625,6 +675,11 @@ mod tests {
             "confirm",
             "⌘⌫ on picks"
         );
+        assert_eq!(
+            dialog_of(cx, handle, &tree, EditorAction::DeleteWithoutConfirm),
+            "none",
+            "skip-prompt delete on picks opens no dialog on non-PROD servers"
+        );
 
         assert_eq!(dialog_of(cx, handle, &tree, A::DeleteKey("k".into())), "confirm");
         assert_eq!(dialog_of(cx, handle, &tree, A::SetTtlKey("k".into())), "ttl");
@@ -645,6 +700,11 @@ mod tests {
             dialog_of(cx, handle, &tree, EditorAction::Delete),
             "confirm",
             "⌘⌫ on the open key"
+        );
+        assert_eq!(
+            dialog_of(cx, handle, &tree, EditorAction::DeleteWithoutConfirm),
+            "none",
+            "skip-prompt delete on the open key opens no dialog on non-PROD servers"
         );
 
         send(cx, handle, &tree, EditorAction::Search);
@@ -761,6 +821,231 @@ mod tests {
                 Some(1),
                 "range anchor moved to key_b's row"
             );
+        });
+    }
+
+    /// Flat list preference is saved in `ZedisAppState` so reopening the tree
+    /// or switching servers preserves the chosen mode.
+    #[gpui::test]
+    fn flat_view_preference_persists_across_new_trees_and_server_switches(cx: &mut TestAppContext) {
+        init_ui(cx);
+        let (handle, tree, server_state) = open_tree(cx, None);
+        assert!(!tree_state(cx, &tree, |s| s.flat_view));
+
+        send(cx, handle, &tree, KeyTreeAction::ToggleFlatView);
+        assert!(tree_state(cx, &tree, |s| s.flat_view));
+        assert!(cx.update(|cx| cx.global::<ZedisGlobalStore>().read(cx).key_tree_flat_view()));
+
+        server_state.update(cx, |state, cx| state.select("srv-b".into(), 0, cx));
+        cx.run_until_parked();
+        assert!(
+            tree_state(cx, &tree, |s| s.flat_view),
+            "switching servers keeps flat view enabled"
+        );
+
+        let (reopened_handle, reopened, _) = open_tree(cx, None);
+        assert!(
+            tree_state(cx, &reopened, |s| s.flat_view),
+            "a newly opened tree reads the persisted flat view"
+        );
+
+        send(cx, reopened_handle, &reopened, KeyTreeAction::ToggleFlatView);
+        assert!(!cx.update(|cx| cx.global::<ZedisGlobalStore>().read(cx).key_tree_flat_view()));
+
+        let (_, third, _) = open_tree(cx, None);
+        assert!(
+            !tree_state(cx, &third, |s| s.flat_view),
+            "toggling back off persists tree mode"
+        );
+    }
+
+    #[gpui::test]
+    fn delete_shortcut_on_selected_folder_always_confirms_and_navigation_stays_collapsed(cx: &mut TestAppContext) {
+        init_ui(cx);
+        let (handle, tree, server_state) = open_tree(cx, Some("scratch"));
+
+        // Seed keys under folder `"user"` plus a top-level leaf `"other"`, and
+        // open `"other"` in the editor.
+        server_state.update(cx, |state, cx| {
+            state.seed_keys_for_test(&[("user:a", "string"), ("user:b", "string"), ("other", "string")], cx);
+            state.select_key("other".into(), cx);
+        });
+        cx.run_until_parked();
+        tree.read_with(cx, |tree, cx| {
+            let items = &tree.key_tree_list_state.read(cx).delegate().items;
+            assert!(items[0].is_folder && items[0].id == "user");
+            assert!(!tree.state.expanded_items.contains("user"));
+        });
+
+        // Arrow navigation (`ListEvent::Select`) onto the collapsed folder selects
+        // it without auto-expanding.
+        tree.update(cx, |tree, cx| {
+            tree.key_tree_list_state
+                .update(cx, |_, cx| cx.emit(ListEvent::Select(IndexPath::new(0))));
+        });
+        cx.run_until_parked();
+        tree.read_with(cx, |tree, cx| {
+            let list = tree.key_tree_list_state.read(cx);
+            assert_eq!(list.delegate().selected_folder.as_deref(), Some("user"));
+            assert!(!tree.state.expanded_items.contains("user"));
+        });
+
+        // Both `Delete` and `DeleteWithoutConfirm` open the folder confirmation
+        // dialog (the open leaf `"other"` would skip confirmation on non-PROD).
+        assert_eq!(dialog_of(cx, handle, &tree, EditorAction::Delete), "confirm");
+        assert_eq!(
+            dialog_of(cx, handle, &tree, EditorAction::DeleteWithoutConfirm),
+            "confirm",
+            "folder deletion never skips confirmation even with `!`"
+        );
+
+        // Confirming (`ListEvent::Confirm` via click or Enter) expands the folder
+        // while keeping it selected across the async rebuild.
+        tree.update(cx, |tree, cx| {
+            tree.key_tree_list_state
+                .update(cx, |_, cx| cx.emit(ListEvent::Confirm(IndexPath::new(0))));
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .expect("the window is open");
+        cx.run_until_parked();
+        tree.read_with(cx, |tree, cx| {
+            let list = tree.key_tree_list_state.read(cx);
+            assert!(tree.state.expanded_items.contains("user"));
+            assert_eq!(list.delegate().selected_folder.as_deref(), Some("user"));
+            assert_eq!(list.selected_index(), Some(IndexPath::new(0)));
+        });
+
+        // Multi-select picks clear `selected_folder` and take priority.
+        pick(cx, &tree, &["other"]);
+        tree.read_with(cx, |tree, cx| {
+            assert_eq!(tree.key_tree_list_state.read(cx).delegate().selected_folder, None);
+        });
+        assert_eq!(
+            dialog_of(cx, handle, &tree, EditorAction::DeleteWithoutConfirm),
+            "none",
+            "multi-select picks remain the delete target"
+        );
+        pick(cx, &tree, &[]);
+
+        // Read-only servers refuse folder deletion from both shortcut and action.
+        tree.update(cx, |tree, cx| {
+            tree.key_tree_list_state
+                .update(cx, |_, cx| cx.emit(ListEvent::Select(IndexPath::new(0))));
+        });
+        cx.run_until_parked();
+        server_state.update(cx, |state, cx| state.toggle_readonly(cx));
+        cx.run_until_parked();
+        assert_eq!(dialog_of(cx, handle, &tree, EditorAction::Delete), "none");
+        assert_eq!(
+            dialog_of(cx, handle, &tree, KeyTreeAction::DeleteFolder("user".into())),
+            "none"
+        );
+        server_state.update(cx, |state, cx| state.toggle_readonly(cx));
+        cx.run_until_parked();
+
+        // Selecting a leaf key clears `selected_folder`.
+        let other_row = tree.read_with(cx, |tree, cx| {
+            tree.key_tree_list_state
+                .read(cx)
+                .delegate()
+                .items
+                .iter()
+                .position(|item| !item.is_folder && item.id == "other")
+                .expect("other row exists")
+        });
+        tree.update(cx, |tree, cx| {
+            tree.key_tree_list_state
+                .update(cx, |_, cx| cx.emit(ListEvent::Select(IndexPath::new(other_row))));
+        });
+        cx.run_until_parked();
+        tree.read_with(cx, |tree, cx| {
+            assert_eq!(tree.key_tree_list_state.read(cx).delegate().selected_folder, None);
+        });
+
+        // Toggling Flat View clears `selected_folder`; toggling back restores the folder.
+        tree.update(cx, |tree, cx| {
+            tree.key_tree_list_state
+                .update(cx, |_, cx| cx.emit(ListEvent::Select(IndexPath::new(0))));
+        });
+        cx.run_until_parked();
+        send(cx, handle, &tree, KeyTreeAction::ToggleFlatView);
+        tree.read_with(cx, |tree, cx| {
+            assert_eq!(tree.key_tree_list_state.read(cx).delegate().selected_folder, None);
+        });
+        send(cx, handle, &tree, KeyTreeAction::ToggleFlatView);
+
+        // Moving focus out of the key tree clears `selected_folder` and list selection.
+        struct FocusOutHarness {
+            tree: Entity<ZedisKeyTree>,
+            outside: FocusHandle,
+        }
+        impl Render for FocusOutHarness {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                h_flex()
+                    .size_full()
+                    .child(div().flex_1().h_full().child(self.tree.clone()))
+                    .child(
+                        div()
+                            .id("outside-editor")
+                            .w(px(100.))
+                            .h_full()
+                            .track_focus(&self.outside),
+                    )
+            }
+        }
+        let mut tree2 = None;
+        let mut outside = None;
+        let focus_window = cx.open_window(size(px(900.), px(720.)), |window, cx| {
+            let built_tree = cx.new(|cx| ZedisKeyTree::new(server_state.clone(), window, cx));
+            let sibling_focus = cx.focus_handle();
+            tree2 = Some(built_tree.clone());
+            outside = Some(sibling_focus.clone());
+            let harness = cx.new(|_| FocusOutHarness {
+                tree: built_tree,
+                outside: sibling_focus,
+            });
+            Root::new(harness, window, cx)
+        });
+        let focus_window: AnyWindowHandle = focus_window.into();
+        let tree2 = tree2.expect("harness built tree");
+        let outside = outside.expect("harness built sibling focus");
+        cx.run_until_parked();
+        cx.update_window(focus_window, |_, window, _| {
+            window.activate_window();
+        })
+        .expect("the window is open");
+        cx.run_until_parked();
+
+        tree2.update(cx, |tree, cx| {
+            tree.key_tree_list_state
+                .update(cx, |_, cx| cx.emit(ListEvent::Select(IndexPath::new(0))));
+        });
+        cx.run_until_parked();
+        cx.update_window(focus_window, |_, window, cx| {
+            assert!(window.is_window_active());
+            tree2.read(cx).focus_handle.clone().focus(window, cx);
+            window.render_frame(cx);
+        })
+        .expect("the window is open");
+        cx.run_until_parked();
+        tree2.read_with(cx, |tree, cx| {
+            assert_eq!(
+                tree.key_tree_list_state.read(cx).delegate().selected_folder.as_deref(),
+                Some("user")
+            );
+        });
+
+        cx.update_window(focus_window, |_, window, cx| {
+            outside.focus(window, cx);
+            window.render_frame(cx);
+        })
+        .expect("the window is open");
+        cx.run_until_parked();
+        tree2.read_with(cx, |tree, cx| {
+            let list = tree.key_tree_list_state.read(cx);
+            assert_eq!(list.delegate().selected_folder, None);
+            assert_eq!(list.selected_index(), None);
         });
     }
 }

@@ -48,7 +48,7 @@ use gpui_kit::component::{
     v_flex,
 };
 use std::collections::BTreeSet;
-use zedis_ui::ZedisDialog;
+use zedis_ui::{ZedisDialog, panel_header};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -543,13 +543,8 @@ impl LuaDebugger {
             (i18n_lua_scripts(cx, "debug_idle"), muted)
         };
         let started = live || self.end.is_some();
-        h_flex()
-            .items_center()
+        panel_header()
             .gap_2()
-            .px_4()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
             .child(
                 Button::new("lua-dbg-close")
                     .ghost()
@@ -644,6 +639,7 @@ impl LuaDebugger {
                 let is_current = live && self.current_line == Some(line);
                 let has_break = self.breakpoints.contains(&line);
                 h_flex()
+                    .id(("lua-dbg-row", line))
                     .w_full()
                     .items_center()
                     .when(is_current, |row| row.bg(current_bg))
@@ -711,7 +707,10 @@ impl LuaDebugger {
         let live = self.is_live();
         let paused = live && !self.busy;
         let mono = get_mono_font_family();
-        let section = |title: SharedString| Label::new(title).text_xs().text_color(muted);
+        let section = |title: SharedString| {
+            let id = SharedString::from(format!("lua-dbg-sec-{title}"));
+            Label::new(title).id(id).text_xs().text_color(muted)
+        };
 
         // KEYS / ARGV and the mode, while nothing is paused.
         let is_cluster = self.server_state.read(cx).is_cluster();
@@ -819,8 +818,9 @@ impl LuaDebugger {
         } else {
             v_flex()
                 .gap_0p5()
-                .children(self.locals.iter().map(|local| {
+                .children(self.locals.iter().enumerate().map(|(ix, local)| {
                     h_flex()
+                        .id(("lua-dbg-local", ix))
                         .gap_2()
                         .items_start()
                         .child(
@@ -848,7 +848,7 @@ impl LuaDebugger {
         } else {
             v_flex()
                 .gap_0p5()
-                .children(self.log.iter().map(|(kind, text)| {
+                .children(self.log.iter().enumerate().map(|(ix, (kind, text))| {
                     let color = match kind {
                         LogKind::Error => cx.theme().red,
                         LogKind::RetVal | LogKind::RedisReply => cx.theme().green,
@@ -857,6 +857,7 @@ impl LuaDebugger {
                         LogKind::Info => muted,
                     };
                     h_flex()
+                        .id(("lua-dbg-log", ix))
                         .gap_2()
                         .items_start()
                         .when(!kind.tag().is_empty(), |row| {

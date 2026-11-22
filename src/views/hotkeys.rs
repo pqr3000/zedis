@@ -32,7 +32,7 @@ use crate::states::{
     i18n_monitor, i18n_slowlog_editor, i18n_troubleshoot,
 };
 use crate::views::panel_poll::{PanelPoll, summary_chip};
-use crate::views::unavailable_chip;
+use crate::views::{open_key_in_editor, unavailable_chip};
 use gpui::{App, ClipboardItem, Entity, ScrollHandle, SharedString, Window, div, prelude::*, px};
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable, StyledExt, WindowExt,
@@ -45,6 +45,7 @@ use gpui_kit::component::{
 use std::time::Duration;
 use zedis_core::report::{Block, Section};
 use zedis_core::string::format_duration;
+use zedis_ui::panel_header;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -55,6 +56,25 @@ const NUM_COL: f32 = 96.0;
 const PCT_COL: f32 = 64.0;
 const BAR_COL: f32 = 80.0;
 const TOP_K_CHOICES: [u64; 3] = [10, 20, 50];
+
+#[derive(Clone, Copy)]
+struct HotkeyListIds {
+    row: &'static str,
+    open: &'static str,
+    copy: &'static str,
+}
+
+const HOTKEYS_CPU_IDS: HotkeyListIds = HotkeyListIds {
+    row: "hk-cpu-row",
+    open: "hk-cpu-open",
+    copy: "hk-cpu-copy",
+};
+
+const HOTKEYS_NET_IDS: HotkeyListIds = HotkeyListIds {
+    row: "hk-net-row",
+    open: "hk-net-open",
+    copy: "hk-net-copy",
+};
 
 pub struct ZedisHotkeys {
     server_state: Entity<ZedisServerState>,
@@ -87,6 +107,22 @@ impl ZedisHotkeys {
         };
         this.start_polling(cx);
         this
+    }
+
+    #[cfg(test)]
+    fn new_with_report(server_state: Entity<ZedisServerState>, report: HotkeysReport) -> Self {
+        Self {
+            server_state,
+            report: Some(report),
+            error: None,
+            track_cpu: true,
+            track_net: true,
+            top_k: TOP_K_CHOICES[0],
+            busy: false,
+            poll: None,
+            pending_notification: None,
+            scroll: ScrollHandle::new(),
+        }
     }
 
     /// Sample now rather than at the end of the interval.
@@ -358,7 +394,7 @@ impl ZedisHotkeys {
     /// share bar, value, share %.
     fn render_top_list(
         &self,
-        id: &'static str,
+        ids: HotkeyListIds,
         title_key: &'static str,
         entries: &[HotkeyEntry],
         total: u64,
@@ -371,8 +407,11 @@ impl ZedisHotkeys {
         let stripe_bg = theme.table_even;
         let table_hover = theme.table_hover;
         let mono = get_mono_font_family();
+        let open_key_tooltip = i18n_common(cx, "open_key_tooltip");
+        let copy_tooltip = i18n_common(cx, "copy");
 
         let mut list = v_flex()
+            .id(SharedString::from(format!("hotkeys-list-{title_key}")))
             .flex_1()
             .min_w_0()
             .border_1()
@@ -399,10 +438,11 @@ impl ZedisHotkeys {
         for (ix, entry) in entries.iter().enumerate() {
             let share = share_of(entry, total);
             let key: SharedString = entry.key.clone().into();
+            let open_key = key.clone();
             let copy_key = key.clone();
             list = list.child(
                 h_flex()
-                    .id(SharedString::from(format!("{id}-row-{ix}")))
+                    .id((ids.row, ix))
                     .w_full()
                     .px_3()
                     .py_1()
@@ -410,7 +450,6 @@ impl ZedisHotkeys {
                     .items_center()
                     .when(ix % 2 != 0, |this| this.bg(stripe_bg))
                     .hover(|s| s.bg(table_hover))
-                    .on_click(cx.listener(move |this, _, _w, cx| this.copy_key(copy_key.clone(), cx)))
                     .child(
                         div().w(px(28.)).child(
                             Label::new(format!("{}", ix + 1))
@@ -454,6 +493,32 @@ impl ZedisHotkeys {
                                 .text_xs()
                                 .text_color(muted),
                         ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .flex_none()
+                            .child(
+                                Button::new((ids.open, ix))
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::Search)
+                                    .tooltip(open_key_tooltip.clone())
+                                    .on_click(cx.listener(move |this, _, _w, cx| {
+                                        open_key_in_editor(&this.server_state, open_key.clone(), cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new((ids.copy, ix))
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::Copy)
+                                    .tooltip(copy_tooltip.clone())
+                                    .on_click(cx.listener(move |this, _, _w, cx| {
+                                        this.copy_key(copy_key.clone(), cx);
+                                    })),
+                            ),
                     ),
             );
         }
@@ -489,7 +554,7 @@ impl ZedisHotkeys {
         let show_net = !report.by_net.is_empty() || report.by_cpu.is_empty();
         if show_cpu {
             lists = lists.child(self.render_top_list(
-                "hk-cpu",
+                HOTKEYS_CPU_IDS,
                 "by_cpu_title",
                 &report.by_cpu,
                 report.total_cpu_us,
@@ -499,7 +564,7 @@ impl ZedisHotkeys {
         }
         if show_net {
             lists = lists.child(self.render_top_list(
-                "hk-net",
+                HOTKEYS_NET_IDS,
                 "by_net_title",
                 &report.by_net,
                 report.total_net_bytes,
@@ -530,13 +595,8 @@ impl Render for ZedisHotkeys {
         v_flex()
             .size_full()
             .child(
-                h_flex()
-                    .items_center()
+                panel_header()
                     .gap_2()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
                     .child(
                         Button::new("hotkeys-back")
                             .ghost()
@@ -727,4 +787,76 @@ fn ranked_list(
 
 async fn fetch_report(server_id: String, db: usize) -> Result<HotkeysReport> {
     Ok(hotkeys_report(&ServerDb::new(server_id, db)).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::states::Route;
+    use crate::test_support::init_ui;
+    use gpui::{AnyWindowHandle, TestAppContext, px, size};
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt;
+
+    #[gpui::test]
+    fn hotkeys_row_copy_and_open_buttons_act_on_key(cx: &mut TestAppContext) {
+        init_ui(cx);
+        let server_id = "hotkeys-test-srv";
+        let server_state = cx.new(|_| ZedisServerState::new_for_test(server_id));
+        cx.update(|cx| {
+            cx.global::<ZedisGlobalStore>().clone().update(cx, |app, cx| {
+                app.go_to(
+                    Route::Server {
+                        id: server_id.into(),
+                        db: 0,
+                        view: ServerView::Hotkeys,
+                    },
+                    cx,
+                );
+            });
+        });
+        let report = HotkeysReport {
+            total_cpu_us: 1_000,
+            by_cpu: vec![HotkeyEntry {
+                key: "hot:key".to_string(),
+                value: 420,
+            }],
+            ..Default::default()
+        };
+        let handle: AnyWindowHandle = cx
+            .open_window(size(px(1000.), px(700.)), |window, cx| {
+                let view = cx.new(|_| ZedisHotkeys::new_with_report(server_state.clone(), report));
+                Root::new(view, window, cx)
+            })
+            .into();
+        cx.run_until_parked();
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find((HOTKEYS_CPU_IDS.open, 0usize)).is_some());
+            assert!(window.try_find((HOTKEYS_CPU_IDS.copy, 0usize)).is_some());
+            window.click((HOTKEYS_CPU_IDS.copy, 0usize), cx);
+        })
+        .expect("window is open");
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some("hot:key".to_string())
+            );
+        });
+
+        cx.update_window(handle, |_, window, cx| {
+            window.click((HOTKEYS_CPU_IDS.open, 0usize), cx);
+        })
+        .expect("window is open");
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            assert_eq!(server_state.read(cx).key().as_deref(), Some("hot:key"));
+            let view = cx.global::<ZedisGlobalStore>().read(cx).route().server_view();
+            assert_eq!(view, Some(ServerView::Editor));
+        });
+    }
 }

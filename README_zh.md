@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/d7007ecf-bbfd-4e68-bbaf-437091f711e7
 - 🧠 **看得懂你的数据** —— 自动解压、自动解码：JSON、Protobuf、MessagePack、JWT、图片等等，每种 Redis 类型和模块都有专用查看器。
 - 📊 **可观测性就在同一个窗口** —— 实时指标、内存分析、热点 key、慢日志、`MONITOR`、集群健康。
 - 🔐 **生产环境锁得住** —— Prod 连接默认锁写，破坏性命令要输入服务器名，密码和私钥按机器加密，没有任何遥测。
-- 🌐 **连你真正在跑的东西** —— TLS、SSH、Cluster、Sentinel；Redis 与 Valkey 同为一等公民；Dragonfly、Garnet、代理和云托管缺什么会灰显并说明原因。
+- 🌐 **连你真正在跑的东西** —— TLS、SSH、Cluster、Sentinel；Redis 与 Valkey 同为一等公民；Dragonfly、Garnet、KiviDB、代理和云托管缺什么会灰显并说明原因。
 - ⌨️ **给天天盯着 Redis 的人** —— ⌘K、带补全的 redis-cli、AI 命令助手、跨服务器复制与对比，同一套应用也能跑在浏览器里。
 
 连接、DB、目录和 Key 组成一棵连续的侧栏树，共用一个滚动条，不显示内嵌搜索栏。展开或折叠分支会保留右侧的值，点击 Key 才打开对应 DB 的编辑器。每个 DB 独立保留搜索、扫描进度和目录展开状态，直到窗口关闭。拖动侧栏右边缘可调整树宽，重新打开窗口会恢复上次的宽度。Ctrl/⌘+F 可搜索当前聚焦的 DB；展开 DB 后，还可从该行的 ⋯ 菜单筛选、查看收藏与最近打开的键。正常打开连接和恢复会话也使用这一布局，Ctrl/⌘ 点击沿用原有标签页偏好。
@@ -151,7 +151,7 @@ docker logs zedis-web 2>&1 | grep "setup token"
 
 ## 🔀 Redis 与 Valkey
 
-Valkey 在这里是一等公民，不是兼容模式。依赖版本的功能能不能用，按两者各自的版本分别判断，服务器不会收到它没有实现的命令。Valkey 独有的功能（`COMMANDLOG`、原子槽迁移、集群多数据库）都有对应面板。Redis 与 Valkey 之间的复制两个方向都能成功，即使两边的 `DUMP` 载荷互不兼容。每次改动都会跑 Redis 6.2–8 和 Valkey 8.0–9.1 的集成测试。Dragonfly 和 Garnet 也能连接：会按各自的版本号识别并显示，它们没有的命令经探测后不再提供（比如 Garnet 没有 Stream）。CI 里各有一条冒烟测试保证连得上、基本操作可用，但不按完整矩阵要求。
+Valkey 在这里是一等公民，不是兼容模式。依赖版本的功能能不能用，按两者各自的版本分别判断，服务器不会收到它没有实现的命令。Valkey 独有的功能（`COMMANDLOG`、原子槽迁移、集群多数据库）都有对应面板。Redis 与 Valkey 之间的复制两个方向都能成功，即使两边的 `DUMP` 载荷互不兼容。每次改动都会跑 Redis 6.2–8 和 Valkey 8.0–9.1 的集成测试。Dragonfly、Garnet 和 KiviDB 也能连接：会按各自的版本号识别并显示，它们没有的命令经探测后不再提供（比如 Garnet 没有 Stream）。CI 里各有一条冒烟测试保证连得上、基本操作可用，但不按完整矩阵要求。
 
 📖 **[兼容矩阵 →](./docs/REDIS_VALKEY_zh.md)**
 
