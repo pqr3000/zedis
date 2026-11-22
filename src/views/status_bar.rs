@@ -12,36 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::states::{command_status_label, i18n_features, i18n_trash, i18n_troubleshoot};
+use crate::states::command_status_label;
 use crate::{
     assets::CustomIconName,
     connection::{
-        CommandStatus, DangerKind, KillTarget, RedisClientDescription, ServerCommand, ServerFeatures, ServerFlavor,
-        WRITE_UNLOCK_SECS, get_server,
+        DangerKind, KillTarget, RedisClientDescription, ServerCommand, ServerFeatures, ServerFlavor, WRITE_UNLOCK_SECS,
+        get_server,
     },
     constants::STATUS_BAR_HEIGHT,
     helpers::{
         client_counts, format_lag_bytes, get_mono_font_family, group_thousands, healthy_color, kills_runaway_scripts,
-        pacing, resolve_tag_chip, saves_files, with_hot_key,
+        pacing, resolve_tag_chip, with_hot_key,
     },
     states::{
-        ConnectionErrorKind, ConnectionHealth, ErrorMessage, ReplicaInfo, SOFT_WRAP_MAX_BYTES, ServerEvent,
-        ServerToolsAction, ServerView, ViewMode, ZedisGlobalStore, ZedisServerState, content_area_width,
-        get_session_option, i18n_acl, i18n_benchmark, i18n_common, i18n_config_editor, i18n_functions, i18n_hotkeys,
-        i18n_key_tree, i18n_keyspace_notifications, i18n_lua_scripts, i18n_monitor, i18n_persistence, i18n_search,
-        i18n_server_info, i18n_server_load, i18n_sidebar, i18n_status_bar, i18n_timeseries, i18n_topology,
-        i18n_value_search, i18n_workbench, save_session_option,
+        ConnectionErrorKind, ConnectionHealth, ErrorMessage, ReplicaInfo, SOFT_WRAP_MAX_BYTES, ServerEvent, ServerView,
+        ViewMode, ZedisGlobalStore, ZedisServerState, content_area_width, get_session_option, i18n_common,
+        i18n_sidebar, i18n_status_bar, save_session_option,
     },
     views::confirm_dangerous_command,
 };
-use gpui::{Anchor, App, Entity, Hsla, SharedString, Subscription, Task, TextAlign, Window, div, prelude::*, rems};
+use gpui::{App, Entity, Hsla, SharedString, Subscription, Task, TextAlign, Window, div, prelude::*, rems};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, IndexPath, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
     label::Label,
-    menu::{DropdownMenu, PopupMenu, PopupMenuItem},
+    menu::{DropdownMenu, PopupMenuItem},
     tooltip::Tooltip,
 };
 use rust_i18n::t;
@@ -52,13 +49,11 @@ use zedis_ui::ZedisDivider;
 mod editor_controls;
 mod server_status;
 mod telemetry;
-mod tools_menu;
 
 use editor_controls::VIEWER_MODES;
 pub(crate) use server_status::product_line;
 use server_status::{format_nodes, format_nodes_description};
 use telemetry::format_latency;
-use tools_menu::ToolsMenuGates;
 
 /// The key count, "listed/total": the keys the tree lists of the ones the
 /// database holds.
@@ -153,20 +148,6 @@ struct StatusBarServerState {
     /// Stored tag color *preset key* (e.g. `magenta`), resolved to
     /// mode-aware chip colors at render time.
     tag_color_key: Option<String>,
-    /// Mirrors `ZedisServerState::supports_search()` — gates the Search
-    /// item in the Tools dropdown so servers without the RediSearch
-    /// module don't get a dead-end menu entry.
-    supports_search: bool,
-    /// Mirrors `ZedisServerState::supports_acl()` — Redis 5.x and
-    /// earlier don't expose the `ACL` command family, so hide the
-    /// menu item entirely there.
-    supports_acl: bool,
-    /// Mirrors `ZedisServerState::supports_functions()` — `FUNCTION`
-    /// commands are Redis 7+.
-    supports_functions: bool,
-    /// Mirrors `ZedisServerState::supports_topology()` — the Topology panel
-    /// is hidden only while the server type is still unknown.
-    supports_topology: bool,
     /// True when `INFO` reports `role:slave` — the connection points at a
     /// replica, so writes will bounce with `-READONLY`. Drives the quiet
     /// "Replica" badge next to the environment tag.
@@ -359,10 +340,6 @@ impl ZedisStatusBar {
         .into();
         let tag = self.state.server_state.tag.clone();
         let tag_color_key = self.state.server_state.tag_color_key.clone();
-        let supports_search = state.supports_search();
-        let supports_acl = state.supports_acl();
-        let supports_functions = state.supports_functions();
-        let supports_topology = state.supports_topology();
         self.state.server_state = StatusBarServerState {
             server_id: state.server_id().to_string().into(),
             size: format_size(state.dbsize(), state.listed_count()),
@@ -416,10 +393,6 @@ impl ZedisStatusBar {
             },
             tag,
             tag_color_key,
-            supports_search,
-            supports_acl,
-            supports_functions,
-            supports_topology,
             is_replica: redis_info.meta.role == "slave",
             features: state.features(),
             active_alert_count: state.active_alerts().len(),
@@ -548,9 +521,9 @@ impl Render for ZedisStatusBar {
 mod tests {
     use super::*;
     use crate::test_support::init_ui;
-    use gpui::{AnyWindowHandle, ElementId, TestAppContext, px, size};
+    use gpui::{AnyWindowHandle, TestAppContext, px, size};
     use gpui_kit::component::Root;
-    use gpui_kit::test::{TestQueryExt, TestWindowExt};
+    use gpui_kit::test::TestWindowExt;
 
     fn open_bar(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ZedisServerState>) {
         let server_state = cx.new(|_| ZedisServerState::default());
@@ -562,57 +535,6 @@ mod tests {
         server_state.update(cx, |state, cx| state.select("scratch".into(), 0, cx));
         cx.run_until_parked();
         (handle.into(), server_state)
-    }
-
-    /// What the open Tools menu lists, top to bottom: its own entries, and
-    /// those of the group whose submenu is open.
-    fn menu_labels(window: &Window) -> (Vec<String>, Vec<String>) {
-        let menu = ElementId::Name("popup-menu".into());
-        let submenu = ElementId::Name("submenu".into());
-        let mut entries: Vec<(bool, f32, String)> = window
-            .elements()
-            .into_iter()
-            .filter(|element| element.path().contains(&menu))
-            .filter_map(|element| {
-                let label = element.label()?.to_string();
-                Some((
-                    element.path().contains(&submenu),
-                    f32::from(element.bounds().origin.y),
-                    label,
-                ))
-            })
-            .collect();
-        entries.sort_by(|a, b| a.1.total_cmp(&b.1));
-        let pick = |inner: bool| entries.iter().filter(|e| e.0 == inner).map(|e| e.2.clone()).collect();
-        (pick(false), pick(true))
-    }
-
-    /// Opens the Tools menu, walks its groups with the arrow key and closes
-    /// it again: the menu's own entries, and each group's in turn.
-    fn walk_tools_menu(cx: &mut TestAppContext, handle: AnyWindowHandle) -> (Vec<String>, Vec<Vec<String>>) {
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            window.click("zedis-status-bar-tools", cx);
-        })
-        .expect("the window is open");
-        cx.run_until_parked();
-        let mut top = Vec::new();
-        let mut groups = Vec::new();
-        for _ in 0..4 {
-            cx.update_window(handle, |_, window, cx| {
-                window.render_frame(cx);
-                let (entries, group) = menu_labels(window);
-                top = entries;
-                groups.push(group);
-                window.press("down", cx);
-            })
-            .expect("the window is open");
-            cx.run_until_parked();
-        }
-        cx.update_window(handle, |_, window, cx| window.press("escape", cx))
-            .expect("the window is open");
-        cx.run_until_parked();
-        (top, groups)
     }
 
     /// The bar for an open server: its context on the left (the terminal,
@@ -629,7 +551,6 @@ mod tests {
             for id in [
                 "zedis-status-bar-server-terminal",
                 "zedis-status-bar-server-toggle-readonly",
-                "zedis-status-bar-tools",
                 "zedis-status-bar-scan-more",
                 "zedis-status-bar-conn-health",
                 "zedis-status-bar-server-metrics",
@@ -649,77 +570,6 @@ mod tests {
             }
         })
         .expect("the window is open");
-    }
-
-    /// The Tools menu: four groups by purpose and the two reports beside
-    /// them, each group's panels in its order — and on a read-only
-    /// connection the writes stay listed, with the reason they are off.
-    #[gpui::test]
-    fn the_tools_menu_groups_the_panels_and_says_why_a_write_is_off(cx: &mut TestAppContext) {
-        init_ui(cx);
-        let (handle, server_state) = open_bar(cx);
-        let (top, groups) = walk_tools_menu(cx, handle);
-        assert_eq!(
-            top,
-            [
-                "Observability",
-                "Query & scripting",
-                "Keys & data",
-                "Administration",
-                "Server capabilities…",
-                "Troubleshooting report…"
-            ]
-        );
-        assert_eq!(
-            groups,
-            [
-                vec![
-                    "Live monitor",
-                    "Command stats",
-                    "Hot keys",
-                    "Keyspace notifications",
-                    "Time series explorer",
-                    "Pub/Sub mode",
-                    "Server info (INFO)",
-                    "Benchmark"
-                ],
-                vec!["Value search", "Lua scripts", "Query workbench"],
-                vec![
-                    "Recycle bin…",
-                    "Import keys…",
-                    "Export loaded keys…",
-                    "Compare with another server…"
-                ],
-                vec![
-                    "Config",
-                    "Persistence",
-                    "Flush current database…",
-                    "Flush all databases…"
-                ],
-            ]
-        );
-
-        server_state.update(cx, |state, cx| state.toggle_readonly(cx));
-        cx.run_until_parked();
-        let (_, groups) = walk_tools_menu(cx, handle);
-        assert_eq!(
-            groups[2],
-            [
-                "Recycle bin…",
-                "Import keys…  ·  Disabled in read-only mode",
-                "Export loaded keys…",
-                "Compare with another server…"
-            ]
-        );
-        assert_eq!(
-            groups[3],
-            [
-                "Config",
-                "Persistence",
-                "Flush current database…  ·  Disabled in read-only mode",
-                "Flush all databases…  ·  Disabled in read-only mode"
-            ]
-        );
     }
 
     #[test]

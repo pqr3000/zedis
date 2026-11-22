@@ -167,7 +167,7 @@ master_nodes = "Maestro"
 slave_nodes = "Réplica"
 modules = "Módulos"
 topology = "Topología"
-settings_tooltip = "Abrir ajustes"
+menu = "Menú"
 github_tooltip = "Marcar en GitHub"
 yes = "Sí"
 
@@ -766,6 +766,8 @@ sample_count_label = "Cantidad"
 sample_empty = "El Hash está vacío"
 
 [kv_table]
+filter_fields = "Filtrar campos"
+filter_entries = "Filtrar entradas"
 field = "Campo"
 value = "Valor"
 score = "Puntuación"

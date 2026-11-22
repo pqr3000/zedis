@@ -18,7 +18,7 @@
 //! database key trees without changing connection or command execution.
 
 use super::ZedisSidebar;
-use crate::connection::{ServerDb, server_summary};
+use crate::connection::{ServerDb, database_key_counts};
 use crate::states::{ZedisGlobalStore, ZedisServerState};
 use gpui::{App, AppContext, Context, Entity, SharedString, Task};
 
@@ -43,24 +43,26 @@ pub(super) struct DatabaseSummary {
 impl DatabaseSummary {
     fn read(state: &ZedisServerState) -> Option<Self> {
         // `reset` retains the old database count until connect completes.
-        // The cleared version prevents attributing that count to a new server.
-        if state.server_id().is_empty() || state.version().is_empty() || state.databases() == 0 {
+        // The selected DB's readings are cleared even when INFO is denied.
+        if state.server_id().is_empty() || state.dbsize().is_none() || state.databases() == 0 {
             return None;
         }
         let mut keys = vec![None; state.databases()];
-        if let Some(info) = state.redis_info() {
+        if let Some(info) = state.redis_info().filter(|info| info.has_keyspace) {
             for (db, count) in keys.iter_mut().enumerate() {
-                // An absent keyspace section may be unavailable under ACLs;
-                // do not turn unknown totals into a claim that every DB is empty.
-                if !info.keyspace.is_empty() {
-                    *count = Some(info.keyspace.get(&format!("db{db}")).map_or(0, |stats| stats.keys));
-                }
+                *count = Some(info.keyspace.get(&format!("db{db}")).map_or(0, |stats| stats.keys));
             }
         }
         if let Some(count) = keys.get_mut(state.db()) {
             *count = state.dbsize().or(*count);
         }
         Some(Self { keys })
+    }
+
+    fn fill_missing(&mut self, other: &Self) {
+        for (count, known) in self.keys.iter_mut().zip(&other.keys) {
+            *count = count.or(*known);
+        }
     }
 }
 
@@ -120,21 +122,19 @@ impl ZedisSidebar {
         let request_server = server.clone();
         let task = cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { server_summary(&ServerDb::new(request_server.as_ref(), db)).await })
+                .background_spawn(async move { database_key_counts(&ServerDb::new(request_server.as_ref(), db)).await })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok(summary) => {
-                        let mut keys = vec![None; summary.databases];
-                        if let Some(count) = keys.get_mut(db) {
-                            *count = Some(summary.dbsize);
-                        }
+                    Ok(keys) => {
+                        let discovered = DatabaseSummary { keys };
                         // A workspace heartbeat may have supplied fresher, more
                         // complete metadata while discovery was in flight.
                         this.databases
                             .servers
                             .entry(server.to_string())
-                            .or_insert(DatabaseSummary { keys });
+                            .and_modify(|current| current.fill_missing(&discovered))
+                            .or_insert(discovered);
                     }
                     Err(error) => {
                         this.databases
@@ -153,10 +153,15 @@ impl ZedisSidebar {
     /// Project existing workspace metadata into navigation, without owning it.
     pub(crate) fn update_databases(&mut self, state: &Entity<ZedisServerState>, cx: &mut Context<Self>) {
         let state = state.read(cx);
-        let Some(summary) = DatabaseSummary::read(state) else {
+        let Some(mut summary) = DatabaseSummary::read(state) else {
             return;
         };
         let id = state.server_id().to_string();
+        if let Some(previous) = self.databases.servers.get(&id) {
+            summary.fill_missing(previous);
+        } else if summary.keys.iter().any(Option::is_none) {
+            self.load_databases(id.clone().into(), cx);
+        }
         if self.databases.servers.get(&id) != Some(&summary) {
             self.databases.servers.insert(id, summary);
             cx.notify();

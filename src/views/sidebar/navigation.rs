@@ -120,7 +120,10 @@ impl ZedisSidebar {
             _ => return,
         };
         if let Some((NavigationRow::Keys { tree, .. }, offset)) = list.read(cx).delegate().row(index.row) {
-            self.workspaces.focused = Some(tree.clone());
+            if let Some(node) = tree.read(cx).sidebar_node(offset, cx) {
+                self.workspaces.focused = Some((tree.clone(), node));
+                cx.notify();
+            }
             tree.update(cx, |tree, cx| tree.select_sidebar_row(offset, confirm, window, cx));
         }
     }
@@ -195,13 +198,9 @@ impl ZedisSidebar {
                 list.scroll_to_item(IndexPath::new(index), ScrollStrategy::Top, window, cx);
             }
         });
-        let look = list_look(cx);
         v_flex()
             .size_full()
             .min_h_0()
-            .when(home_lives_in_the_sidebar(), |view| {
-                view.child(self.home_band(self.state.server_id.is_empty(), &look, window, cx))
-            })
             .child(
                 v_flex()
                     .id(SIDEBAR_LIST_ID)
@@ -220,7 +219,7 @@ impl ZedisSidebar {
         handler: fn(&mut ZedisKeyTree, &A, &mut Window, &mut Context<ZedisKeyTree>),
     ) -> impl Fn(&mut Self, &A, &mut Window, &mut Context<Self>) {
         move |sidebar, action, window, cx| {
-            if let Some(tree) = sidebar.workspaces.focused.clone() {
+            if let Some((tree, _)) = sidebar.workspaces.focused.clone() {
                 tree.update(cx, |tree, cx| handler(tree, action, window, cx));
             } else {
                 cx.propagate();
@@ -237,25 +236,37 @@ impl ZedisSidebar {
     ) -> AnyElement {
         match row {
             NavigationRow::Keys { server, db, tree } => {
-                let selected = tree.read(cx).sidebar_row_selected(offset, cx);
+                let node = tree.read(cx).sidebar_node(offset, cx);
+                let selected = self.workspaces.focused.as_ref().map_or_else(
+                    || tree.read(cx).sidebar_row_selected(offset, cx),
+                    |(focused, selection)| focused == &tree && Some(selection) == node.as_ref(),
+                );
                 let id = tree.read(cx).sidebar_row_id(&server, db, offset, cx);
-                let item = tree.update(cx, |tree, cx| tree.render_sidebar_row(offset, window, cx));
-                div()
+                let actions = node
+                    .as_ref()
+                    .filter(|_| selected)
+                    .map(|node| self.item_actions(&tree, node, &id, offset, window, cx));
+                let item = tree.update(cx, |tree, cx| tree.render_sidebar_row(offset, selected, window, cx));
+                h_flex()
                     .id(id)
                     .pl_10()
                     .h_8()
                     .w_full()
-                    .when(selected, |row| row.bg(cx.theme().primary))
+                    .when(selected, |row| row.bg(cx.theme().list_active))
                     .capture_any_mouse_down(cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                         if matches!(event.button, MouseButton::Left | MouseButton::Right) {
-                            this.workspaces.focused = Some(tree.clone());
+                            if let Some(node) = &node {
+                                this.workspaces.focused = Some((tree.clone(), node.clone()));
+                                cx.notify();
+                            }
                             this.navigation.read(cx).focus_handle(cx).focus(window, cx);
                         }
                     }))
-                    .children(item)
+                    .child(div().flex_1().min_w_0().children(item))
+                    .children(actions)
                     .into_any_element()
             }
-            NavigationRow::Database(server, db) => self.navigation_database(server, db, cx),
+            NavigationRow::Database(server, db) => self.navigation_database(server, db, window, cx),
             NavigationRow::Discovery(server) => {
                 let loading = self.databases.loading.contains_key(server.as_ref());
                 Button::new(SharedString::from(format!("sidebar-db-open-{server}")))
@@ -364,7 +375,13 @@ impl ZedisSidebar {
             .into_any_element()
     }
 
-    fn navigation_database(&self, server: SharedString, db: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn navigation_database(
+        &self,
+        server: SharedString,
+        db: usize,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let count = self
             .databases
             .servers
@@ -372,7 +389,7 @@ impl ZedisSidebar {
             .and_then(|summary| summary.keys.get(db))
             .copied()
             .flatten();
-        let label = count.map_or_else(|| format!("db{db}  (—)"), |count| format!("db{db}  ({count})"));
+        let label = count.map_or_else(|| format!("db{db}"), |count| format!("db{db}  ({count})"));
         let target = server.clone();
         let active = cx
             .global::<ZedisGlobalStore>()
@@ -408,6 +425,6 @@ impl ZedisSidebar {
                 }
             }))
             .into_any_element();
-        self.database_tree_row(server, db, row, cx)
+        self.database_tree_row(server, db, row, window, cx)
     }
 }

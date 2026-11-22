@@ -16,6 +16,7 @@
 //! dropping and coming back, the heartbeat's probe.
 
 use super::*;
+use zedis_connection::database_key_counts;
 
 /// The same connection code works under a tokio runtime, which is what the
 /// HTTP bridge will run on (ADR 9).
@@ -236,12 +237,24 @@ fn standalone_user_without_info_connects_and_beats() {
         let summary = server_summary(&at).await.expect("connects without INFO");
         assert!(summary.dbsize >= 1, "{summary:?}");
         assert_eq!(summary.version, "0.0.0", "the version is INFO's to tell");
+        let counts = database_key_counts(&at).await.expect("DBSIZE works without INFO");
+        assert!(counts[0].is_some_and(|count| count > 0));
+        assert!(counts.iter().skip(1).all(Option::is_none));
         // The beat judges the link by PING, and says there is no INFO text.
         assert_eq!(heartbeat_probe(&at).await.expect("the link answers"), None);
         // And it reads: the type and TTL of a key, the key itself.
         let (key_type, ttl) = key_type_and_ttl(&at, &key).await.expect("type + ttl");
         assert_eq!((key_type.as_str(), ttl), ("string", -1));
 
+        cmd("ACL")
+            .arg("SETUSER")
+            .arg(&user)
+            .arg("-dbsize")
+            .exec_async(&mut admin)
+            .await
+            .expect("deny DBSIZE");
+        let unknown = database_key_counts(&at).await.expect("the database list still opens");
+        assert_eq!(unknown, vec![None; summary.databases]);
         cmd("DEL").arg(&key).exec_async(&mut admin).await.expect("del");
         cmd("ACL")
             .arg("DELUSER")

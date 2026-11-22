@@ -19,6 +19,7 @@
 use super::*;
 use crate::connection::Capability;
 use crate::helpers::{has_file_dialogs, value_write_limit};
+use crate::views::kv_table::collection_view;
 use crate::views::{open_zmpop_dialog, past_write_limit};
 use gpui::rems;
 
@@ -476,7 +477,7 @@ impl ZedisEditor {
                     debug!("Creating new list editor");
                     cx.new(|cx| ZedisListEditor::new(self.server_state.clone(), window, cx))
                 });
-                editor.clone().into_any_element()
+                collection_view(editor, self.sidebar_tools.as_ref(), cx)
             }
             KeyType::Set => {
                 self.reset_editors(KeyType::Set);
@@ -484,7 +485,7 @@ impl ZedisEditor {
                     debug!("Creating new set editor");
                     cx.new(|cx| ZedisSetEditor::new(self.server_state.clone(), window, cx))
                 });
-                editor.clone().into_any_element()
+                collection_view(editor, self.sidebar_tools.as_ref(), cx)
             }
             KeyType::Zset => {
                 self.reset_editors(KeyType::Zset);
@@ -492,6 +493,9 @@ impl ZedisEditor {
                 let map_mode = self.zset_map_mode && self.zset_is_geo == Some(true);
 
                 if map_mode {
+                    if let Some(host) = &self.sidebar_tools {
+                        CollectionTools::clear(host, cx);
+                    }
                     let map = self.geo_map.get_or_insert_with(|| {
                         debug!("Creating new geo map");
                         let map = cx.new(|cx| ZedisGeoMap::new(self.server_state.clone(), window, cx));
@@ -535,6 +539,7 @@ impl ZedisEditor {
                                             Button::new("zset-zmpop-btn")
                                                 .ghost()
                                                 .icon(IconName::ArrowRight)
+                                                .accessibility_label(i18n_zset_editor(cx, "zmpop_button"))
                                                 .tooltip(i18n_zset_editor(cx, "zmpop_button"))
                                                 .on_click(move |_, window, cx| {
                                                     open_zmpop_dialog(state_for_zmpop.clone(), window, cx);
@@ -551,13 +556,15 @@ impl ZedisEditor {
                                             }
                                         };
                                         buttons.push(
-                                            Button::new("zset-sort-order").icon(icon).tooltip(tooltip).on_click(
-                                                move |_, _, cx| {
+                                            Button::new("zset-sort-order")
+                                                .icon(icon)
+                                                .accessibility_label(tooltip.clone())
+                                                .tooltip(tooltip)
+                                                .on_click(move |_, _, cx| {
                                                     server_state.update(cx, |state, cx| {
                                                         state.set_zset_sort_order(order.toggled(), cx);
                                                     });
-                                                },
-                                            ),
+                                                }),
                                         );
                                     }
                                     if ed.read(cx).zset_is_geo == Some(true) {
@@ -567,6 +574,7 @@ impl ZedisEditor {
                                         buttons.push(
                                             Button::new("zset-view-map")
                                                 .icon(IconName::Map)
+                                                .accessibility_label(i18n_geo_map(cx, "map"))
                                                 .tooltip(i18n_geo_map(cx, "map"))
                                                 .on_click(move |_, _, cx| {
                                                     let _ = w_map.update(cx, |e, cx| {
@@ -585,7 +593,7 @@ impl ZedisEditor {
                         });
                         editor
                     });
-                    editor.clone().into_any_element()
+                    collection_view(editor, self.sidebar_tools.as_ref(), cx)
                 }
             }
             KeyType::Hash => {
@@ -594,7 +602,7 @@ impl ZedisEditor {
                     debug!("Creating new hash editor");
                     cx.new(|cx| ZedisHashEditor::new(self.server_state.clone(), window, cx))
                 });
-                editor.clone().into_any_element()
+                collection_view(editor, self.sidebar_tools.as_ref(), cx)
             }
             KeyType::Stream => {
                 self.reset_editors(KeyType::Stream);
@@ -602,7 +610,7 @@ impl ZedisEditor {
                     debug!("Creating new stream editor");
                     cx.new(|cx| ZedisStreamEditor::new(self.server_state.clone(), window, cx))
                 });
-                editor.clone().into_any_element()
+                collection_view(editor, self.sidebar_tools.as_ref(), cx)
             }
             KeyType::Channel => {
                 self.reset_editors(KeyType::Channel);

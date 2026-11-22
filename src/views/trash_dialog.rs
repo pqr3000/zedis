@@ -14,7 +14,7 @@
 
 //! Recycle-bin dialog for soft-deleted keys.
 //!
-//! Opened from the status bar's Tools menu. Lists the local trash entries
+//! Opened from the sidebar menu. Lists the local trash entries
 //! of the active server (all databases) with per-row Restore / Remove.
 //! Restore replays the stored `DUMP` payload via `RESTORE`, carrying the
 //! TTL the key had when it was deleted; a key that meanwhile exists again

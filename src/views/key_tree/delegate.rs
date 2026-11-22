@@ -72,7 +72,7 @@ fn retain_picks_with_rows(picks: &mut AHashSet<SharedString>, items: &[KeyTreeIt
 }
 
 pub(super) struct KeyTreeDelegate {
-    pub(super) sidebar: bool,
+    pub(super) sidebar_selection: Option<bool>,
     pub(super) items: Vec<KeyTreeItem>,
     pub(super) enabled_multiple_selection: bool,
     pub(super) selected_items: AHashSet<SharedString>,
@@ -166,6 +166,20 @@ impl KeyTreeDelegate {
     }
 }
 
+impl KeyTreeDelegate {
+    pub(super) fn menu_for(&self, item: &KeyTreeItem) -> RowMenu {
+        RowMenu {
+            id: item.id.clone(),
+            is_folder: item.is_folder,
+            selected: !item.is_folder && self.selected_items.contains(&item.id),
+            selected_items_count: self.selected_items.len(),
+            readonly: self.readonly,
+            // Offer Remove TTL while the TTL is unknown or it can expire.
+            may_expire: item.ttl_secs.is_none_or(|secs| secs >= 0),
+        }
+    }
+}
+
 impl ListDelegate for KeyTreeDelegate {
     type Item = ListItem;
 
@@ -183,7 +197,7 @@ impl ListDelegate for KeyTreeDelegate {
         if entry.load_more_prefix.is_some() {
             return Some(load_more_row(ix, entry, cx));
         }
-        let icon = if self.sidebar && !entry.is_folder {
+        let icon = if self.sidebar_selection.is_some() && !entry.is_folder {
             Icon::new(CustomIconName::Key)
                 .text_color(cx.theme().warning)
                 .into_any_element()
@@ -195,12 +209,8 @@ impl ListDelegate for KeyTreeDelegate {
         let is_folder = entry.is_folder;
         let is_scanning = entry.is_scanning;
 
-        let is_selected_row = self.is_active_row(entry, cx);
-        let selected_row_bg = if self.sidebar {
-            cx.theme().primary
-        } else {
-            cx.theme().list_active
-        };
+        let is_selected_row = self.sidebar_selection.unwrap_or_else(|| self.is_active_row(entry, cx));
+        let selected_row_bg = cx.theme().list_active;
         // Faint zebra stripe fill for banded leaf rows. Dark needs a higher
         // alpha than light — white-on-dark reads weaker than black-on-light at
         // the same opacity.
@@ -223,15 +233,10 @@ impl ListDelegate for KeyTreeDelegate {
         } else {
             false
         };
-        let selected_items_count = self.selected_items.len();
         let readonly = self.readonly;
         let menu_row = self.menu_row.clone();
         let menu_open_here = menu_row.borrow().as_ref() == Some(&entry.id);
         let tree = cx.entity().downgrade();
-        // Remove TTL is offered unless the key is known not to expire
-        // (`-1`), or known to be gone (`-2`); with the TTL column off it is
-        // not known, and offered.
-        let may_expire = entry.ttl_secs.is_none_or(|secs| secs >= 0);
         // Pre-resolve the tag colour (the left-edge bar) before the ListItem
         // builder chain: theming reads can't borrow `cx` across the chain.
         // The note and a folder's tags are `row_name`'s.
@@ -255,17 +260,12 @@ impl ListDelegate for KeyTreeDelegate {
         let delete_tooltip = i18n_key_tree(cx, "delete_key_tooltip");
         let guide_color = cx.theme().muted_foreground.alpha(0.5);
         let guides = depth_guides(entry.depth, guide_color);
-        let row_menu = RowMenu {
-            id: entry.id.clone(),
-            is_folder,
-            selected,
-            selected_items_count,
-            readonly,
-            may_expire,
-        };
+        let row_menu = self.menu_for(entry);
         Some(
             ListItem::new(ix)
-                .when(!self.sidebar, |row| row.font_family(get_mono_font_family()))
+                .when(self.sidebar_selection.is_none(), |row| {
+                    row.font_family(get_mono_font_family())
+                })
                 .w_full()
                 // Padding/background/hover live on the content div below so the
                 // hover fill is full-bleed and high-contrast; zero ListItem's
@@ -273,7 +273,7 @@ impl ListDelegate for KeyTreeDelegate {
                 .py_0()
                 .px_0()
                 .mb_1()
-                .when(self.sidebar, |row| row.h_8().mb_0())
+                .when(self.sidebar_selection.is_some(), |row| row.h_8().mb_0())
                 .child(
                     div()
                         // Hover group so the inline delete button (below)
@@ -327,7 +327,7 @@ impl ListDelegate for KeyTreeDelegate {
                                 // takes its spot without overlapping it.
                                 .relative()
                                 .child(icon)
-                                .child(row_name(ix, entry, menu_open_here, self.sidebar && is_selected_row, cx))
+                                .child(row_name(ix, entry, menu_open_here, cx))
                                 // A checkbox of its own, not a picture of one: it
                                 // picks the key whether or not the mode is on (a
                                 // selection made with modifier clicks shows it
@@ -562,14 +562,12 @@ fn depth_guides(depth: usize, guide_color: Hsla) -> Vec<AnyElement> {
 /// A row's name — the last segment of its key or prefix — with the whole
 /// path in its tooltip, under it a key's note or a folder's tags; no
 /// tooltip while the row's menu is open.
-fn row_name(ix: IndexPath, entry: &KeyTreeItem, menu_open_here: bool, selected: bool, cx: &App) -> impl IntoElement {
+fn row_name(ix: IndexPath, entry: &KeyTreeItem, menu_open_here: bool, cx: &App) -> impl IntoElement {
     let is_folder = entry.is_folder;
     // Folders sit one brightness step below leaves; an *expanded* folder
     // steps back up to full foreground (with its open icon, see above) so
     // "which folders are open" reads at a glance.
-    let label_color = if selected {
-        cx.theme().primary_foreground
-    } else if is_folder && !entry.expanded {
+    let label_color = if is_folder && !entry.expanded {
         cx.theme().foreground.alpha(0.85)
     } else {
         cx.theme().foreground
@@ -857,7 +855,7 @@ mod tests {
         let mut list = None;
         let handle = cx.open_window(size(px(400.), px(300.)), |window, cx| {
             let delegate = KeyTreeDelegate {
-                sidebar: false,
+                sidebar_selection: None,
                 items: vec![leaf("a"), leaf("b")],
                 enabled_multiple_selection: true,
                 selected_items: AHashSet::new(),
@@ -928,7 +926,7 @@ mod tests {
         let mut list = None;
         let handle = cx.open_window(size(px(480.), px(640.)), |window, cx| {
             let delegate = KeyTreeDelegate {
-                sidebar: false,
+                sidebar_selection: None,
                 items,
                 enabled_multiple_selection: false,
                 selected_items: AHashSet::new(),

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::states::{ServerEvent, ServerView, i18n_key_tree};
-use crate::views::key_tree::SidebarWorkspaceRequested;
+use crate::views::key_tree::{SidebarNode, SidebarWorkspaceRequested};
 use crate::views::{ZedisContent, ZedisKeyTree};
 use gpui::{Anchor, Entity, EventEmitter, Focusable};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu};
@@ -30,7 +30,7 @@ pub(super) struct DatabaseWorkspace {
 #[derive(Default)]
 pub(super) struct DatabaseWorkspaces {
     pub(super) entries: HashMap<(String, usize), DatabaseWorkspace>,
-    pub(super) focused: Option<Entity<ZedisKeyTree>>,
+    pub(super) focused: Option<(Entity<ZedisKeyTree>, SidebarNode)>,
 }
 
 impl DatabaseWorkspaces {
@@ -40,7 +40,7 @@ impl DatabaseWorkspaces {
         if self
             .focused
             .as_ref()
-            .is_some_and(|focused| !self.entries.values().any(|entry| &entry.tree == focused))
+            .is_some_and(|(focused, _)| !self.entries.values().any(|entry| &entry.tree == focused))
         {
             self.focused = None;
         }
@@ -56,7 +56,10 @@ impl ZedisSidebar {
         cx: &mut Context<Self>,
     ) {
         let content = self.ensure_database_workspace(server.clone(), db, window, cx);
-        self.workspaces.focused = content.read(cx).database_tree();
+        self.workspaces.focused = content
+            .read(cx)
+            .database_tree()
+            .map(|tree| (tree, SidebarNode::Database));
         self.reveal_database_workspace(&server, db, cx);
     }
 
@@ -125,20 +128,25 @@ impl ZedisSidebar {
         });
         let state = content.read(cx).server_state();
         let (server, db) = (state.read(cx).server_id().to_string(), state.read(cx).db());
-        let updates = cx.subscribe(&state, move |this, state, event, cx| {
-            if matches!(
-                event,
-                ServerEvent::ServerInfoUpdated | ServerEvent::ServerRedisInfoUpdated
-            ) {
+        let selection_tree = tree.clone();
+        let updates = cx.subscribe(&state, move |this, state, event, cx| match event {
+            ServerEvent::ServerInfoUpdated | ServerEvent::ServerRedisInfoUpdated => {
                 this.update_databases(&state, cx);
             }
+            // The editor can also open a key through the command palette or a deep link.
+            ServerEvent::KeySelected(key) if !state.read(cx).is_background() => {
+                this.workspaces.focused = Some((selection_tree.clone(), SidebarNode::Key(key.clone())));
+                cx.notify();
+            }
+            _ => {}
         });
         let selected_content = content.clone();
         let opened = cx.subscribe_in(
             &tree,
             window,
             move |this, tree, event: &SidebarWorkspaceRequested, window, cx| {
-                this.workspaces.focused = Some(tree.clone());
+                this.workspaces.focused = Some((tree.clone(), event.node.clone()));
+                cx.notify();
                 if let Some(action) = event.editor_action {
                     selected_content.update(cx, |content, cx| content.sidebar_editor_action(action, window, cx));
                 }
@@ -189,6 +197,7 @@ impl ZedisSidebar {
         server: SharedString,
         db: usize,
         row: AnyElement,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entry = self.workspaces.entries.get(&(server.to_string(), db));
@@ -209,6 +218,7 @@ impl ZedisSidebar {
                 let entry = this.workspaces.entries.get_mut(&(toggle_server.to_string(), db));
                 if let Some(entry) = entry.filter(|entry| entry.expanded) {
                     entry.expanded = false;
+                    this.workspaces.focused = Some((entry.tree.clone(), SidebarNode::Database));
                     entry
                         .tree
                         .update(cx, |tree, cx| tree.set_external_visibility(false, cx));
@@ -227,9 +237,22 @@ impl ZedisSidebar {
             return row.into_any_element();
         };
         let tree = entry.tree.clone();
+        let selected = self.workspaces.focused.as_ref().map_or_else(
+            || {
+                self.active_content.as_ref() == Some(&entry.content)
+                    && entry.content.read(cx).server_state().read(cx).key().is_none()
+            },
+            |(focused, node)| focused == &tree && *node == SidebarNode::Database,
+        );
+        let row = row.when(selected && Self::room_for_row_actions(window, cx), |row| {
+            row.child(self.database_actions(&server, db, entry, cx))
+        });
         let sidebar = cx.entity().downgrade();
         let menu = move |menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>| {
-            let _ = sidebar.update(cx, |sidebar, _| sidebar.workspaces.focused = Some(tree.clone()));
+            let _ = sidebar.update(cx, |sidebar, cx| {
+                sidebar.workspaces.focused = Some((tree.clone(), SidebarNode::Database));
+                cx.notify();
+            });
             ZedisKeyTree::database_menu(&tree, menu, window, cx)
         };
         let more = i18n_key_tree(cx, "more_tooltip");

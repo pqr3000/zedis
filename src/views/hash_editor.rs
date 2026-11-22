@@ -413,6 +413,7 @@ impl ZedisHashEditor {
                     Button::new("hash-sample-btn")
                         .ghost()
                         .icon(CustomIconName::SwatchBook)
+                        .accessibility_label(i18n_hash_editor(cx, "sample_fields_tooltip"))
                         .tooltip(i18n_hash_editor(cx, "sample_fields_tooltip"))
                         .on_click(move |_, window, cx| {
                             open_hash_sample_dialog(sample_state.clone(), window, cx);
@@ -426,6 +427,7 @@ impl ZedisHashEditor {
                             .ghost()
                             .selected(active)
                             .icon(CustomIconName::Clock3)
+                            .accessibility_label(i18n_hash_editor(cx, "expiring_filter_tooltip"))
                             .tooltip(i18n_hash_editor(cx, "expiring_filter_tooltip"))
                             .on_click(move |_, _window, cx| {
                                 state_for_click.update(cx, |state, cx| {

@@ -15,6 +15,7 @@
 use crate::views::ZedisProtoEditor;
 #[cfg(not(target_family = "wasm"))]
 use crate::views::ZedisScriptEditor;
+use crate::views::kv_table::CollectionTools;
 use crate::views::{ZedisKeyspaceNotifications, ZedisMonitor, ZedisTopology};
 use crate::{
     helpers::{EditorAction, get_key_tree_widths},
@@ -61,7 +62,7 @@ mod database_workspace;
 /// server routes entirely or when the active connection `(id, db)` changes.
 pub struct ZedisContent {
     /// A sidebar database owns this workspace's identity for its lifetime.
-    sidebar_tree: bool,
+    sidebar_tools: Option<Entity<CollectionTools>>,
     /// Reference to the server state containing Redis connection and data
     server_state: Entity<ZedisServerState>,
 
@@ -119,7 +120,7 @@ impl ZedisContent {
         }
         // Editor suite: keep for any `Route::Server` so tool pages don't
         // wipe expand/scroll/multi-select/keyword. Drop only off-server.
-        if !route.is_server() && !self.sidebar_tree {
+        if !route.is_server() && !self.has_sidebar_tree() {
             self.drop_editor_suite();
         }
         if route != Route::Protos {
@@ -206,7 +207,7 @@ impl ZedisContent {
         self.active = active;
         self.server_state.update(cx, |state, _| state.set_background(!active));
         if active {
-            if self.sidebar_tree {
+            if self.has_sidebar_tree() {
                 self.current_route = cx.global::<ZedisGlobalStore>().read(cx).route();
             }
             // Flag only — callers (`activate_tab`, close handlers) always
@@ -254,7 +255,7 @@ impl ZedisContent {
                     if !this.active {
                         return;
                     }
-                    if this.sidebar_tree
+                    if this.has_sidebar_tree()
                         && (this.server_state.read(cx).server_id() != server_id.as_str()
                             || this.server_state.read(cx).db() != *db)
                     {
@@ -273,7 +274,7 @@ impl ZedisContent {
                         (s.server_id().to_string(), s.db())
                     };
                     let connection_changed = prev_id.as_str() != server_id.as_str() || prev_db != *db;
-                    if !this.sidebar_tree {
+                    if !this.has_sidebar_tree() {
                         this.server_state.update(cx, |state, cx| {
                             state.select(server_id.clone(), *db, cx);
                         });
@@ -340,7 +341,7 @@ impl ZedisContent {
         info!("Creating new content view");
 
         Self {
-            sidebar_tree: false,
+            sidebar_tools: None,
             server_state,
             status_bar,
             current_route: route,
@@ -575,17 +576,10 @@ impl ZedisContent {
                 .clone();
             terminal.into_any_element()
         } else {
-            let value_editor = self
-                .value_editor
-                .get_or_insert_with(|| {
-                    debug!("Creating new value editor view");
-                    cx.new(|cx| ZedisEditor::new(server_state.clone(), window, cx))
-                })
-                .clone();
-            value_editor.into_any_element()
+            self.value_editor_for_workspace(window, cx).into_any_element()
         };
 
-        if self.sidebar_tree {
+        if self.has_sidebar_tree() {
             return right_panel_content;
         }
 
@@ -619,7 +613,7 @@ impl ZedisContent {
 impl Render for ZedisContent {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let route = cx.global::<ZedisGlobalStore>().read(cx).route();
-        let tree_focused = self.sidebar_tree
+        let tree_focused = self.has_sidebar_tree()
             && self
                 .key_tree
                 .as_ref()

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::views::ZedisPubsubEditor;
+use crate::views::kv_table::CollectionTools;
 use crate::views::placeholders::Placeholders;
 // The link panel's Diagnose button opens the desktop's diagnostics window.
 use crate::{
@@ -136,6 +137,7 @@ pub struct DiffSession {
 /// Main editor component for displaying and editing Redis key values
 /// Supports different key types (String, List, etc.) with type-specific editors
 pub struct ZedisEditor {
+    pub(super) sidebar_tools: Option<Entity<CollectionTools>>,
     /// Reference to the server state containing Redis connection and data
     server_state: Entity<ZedisServerState>,
 
@@ -511,6 +513,7 @@ impl ZedisEditor {
 
         Self {
             auto_refresh_task: None,
+            sidebar_tools: None,
             auto_refresh_interval_sec: 0,
             server_state,
             list_editor: None,

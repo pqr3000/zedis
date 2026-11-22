@@ -85,9 +85,9 @@ mod pattern_ops;
 mod render;
 mod row_menu;
 mod sidebar;
-pub(crate) use sidebar::SidebarWorkspaceRequested;
 #[cfg(test)]
 pub(crate) use sidebar::sidebar_key_id;
+pub(crate) use sidebar::{SidebarNode, SidebarWorkspaceRequested};
 
 pub(crate) use pattern_ops::open_pattern_ops_dialog_with_pattern;
 
@@ -524,7 +524,7 @@ impl ZedisKeyTree {
         info!(server_id, "Creating new key tree view");
 
         let delegate = KeyTreeDelegate {
-            sidebar: false,
+            sidebar_selection: None,
             items: Vec::new(),
             enabled_multiple_selection: false,
             selected_items: AHashSet::with_capacity(5),
@@ -1189,6 +1189,7 @@ impl ZedisKeyTree {
                 cx.emit(SidebarWorkspaceRequested {
                     view: ServerView::Editor,
                     editor_action: None,
+                    node: SidebarNode::Key(item_id),
                 });
             }
         }

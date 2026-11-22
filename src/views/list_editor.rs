@@ -293,6 +293,7 @@ impl ZedisListEditor {
                     Button::new("list-pop-move-btn")
                         .ghost()
                         .icon(IconName::ArrowRight)
+                        .accessibility_label(i18n_list_editor(cx, "move_or_mpop"))
                         .tooltip(i18n_list_editor(cx, "move_or_mpop"))
                         .on_click(move |_, window, cx| {
                             open_list_pop_move_dialog(state_for_click.clone(), window, cx);

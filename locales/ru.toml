@@ -167,7 +167,7 @@ master_nodes = "Мастер"
 slave_nodes = "Реплика"
 modules = "Модули"
 topology = "Топология"
-settings_tooltip = "Открыть настройки"
+menu = "Меню"
 github_tooltip = "Поставить звезду на GitHub"
 yes = "Да"
 
@@ -766,6 +766,8 @@ sample_count_label = "Количество"
 sample_empty = "Хэш пуст"
 
 [kv_table]
+filter_fields = "Фильтр по полям"
+filter_entries = "Фильтр по элементам"
 field = "Поле"
 value = "Значение"
 score = "Оценка"

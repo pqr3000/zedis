@@ -155,20 +155,6 @@ impl ZedisStatusBar {
         let tag_text = server_state.tag.clone();
         let tag_chip = resolve_tag_chip(server_state.tag_color_key.as_deref(), cx.theme().is_dark());
         let is_replica = server_state.is_replica;
-        let supports_search = server_state.supports_search;
-        let supports_acl = server_state.supports_acl;
-        let supports_functions = server_state.supports_functions;
-        let supports_topology = server_state.supports_topology;
-        let readonly = self.readonly;
-        let features = server_state.features.clone();
-        let gates = ToolsMenuGates {
-            supports_search,
-            supports_acl,
-            supports_functions,
-            supports_topology,
-            readonly,
-            features,
-        };
         let status_text = cx.theme().muted_foreground;
         let badge_radius = cx.theme().radius * 0.5;
         ZedisDivider::new()
@@ -317,19 +303,7 @@ impl ZedisStatusBar {
                                     },
                                 );
                             }))
-                    })
-                    .child(
-                        Button::new("zedis-status-bar-tools")
-                            .ghost()
-                            .small()
-                            .icon(Icon::new(IconName::Menu).text_color(status_text))
-                            .tooltip(i18n_status_bar(cx, "tools_tooltip"))
-                            // Status bar sits at the bottom, so open the menu
-                            // upward (its bottom edge anchored to the button).
-                            .dropdown_menu_with_anchor(Anchor::BottomLeft, move |this, window, cx| {
-                                Self::render_tools_menu(this, &gates, window, cx)
-                            }),
-                    ),
+                    }),
             )
             .child(
                 h_flex()

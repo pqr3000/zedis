@@ -16,6 +16,38 @@
 //! clients, persistence and the observability reads.
 
 use super::*;
+use zedis_connection::database_key_counts;
+
+#[test]
+#[ignore]
+fn first_database_listing_includes_unopened_databases() {
+    smol::block_on(async {
+        let id = register(server("it-database-listing", standalone())).await;
+        let summary = server_summary(&ServerDb::new(&id, 0)).await.expect("server summary");
+        let other = summary.databases.saturating_sub(1);
+        let key = unique("db-listing");
+        let mut connection = conn(&id, other).await;
+        cmd("SET")
+            .arg(&key)
+            .arg("sample")
+            .arg("EX")
+            .arg(60)
+            .exec_async(&mut connection)
+            .await
+            .expect("seed a key");
+        let counts = database_key_counts(&ServerDb::new(&id, 0))
+            .await
+            .expect("list from db0");
+        assert_eq!(counts.len(), summary.databases);
+        assert!(counts.iter().all(Option::is_some));
+        assert!(counts[other].is_some_and(|n| n > 0));
+        cmd("DEL")
+            .arg(key)
+            .exec_async(&mut connection)
+            .await
+            .expect("remove test key");
+    });
+}
 
 /// The TimeSeries writes the chart panel gained. RedisTimeSeries only, so
 /// this runs on the stack lane and skips loudly everywhere else.

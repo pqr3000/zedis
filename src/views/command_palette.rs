@@ -423,7 +423,7 @@ impl ZedisCommandPalette {
         // `needs_server` gate.
         let conn = current_route.server();
         let view_route = |view: ServerView| conn.clone().map(|(id, db)| Route::Server { id, db, view });
-        // Same capability gates as the status-bar Tools menu — the
+        // Same capability gates as the sidebar menu — the
         // menu shows those entries disabled with a reason; a palette
         // row can't carry that affordance, so gated tools are hidden
         // outright instead of failing after navigation.

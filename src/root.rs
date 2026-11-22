@@ -52,7 +52,7 @@ use crate::states::{
 #[cfg(not(target_family = "wasm"))]
 use crate::states::{WindowPlacement, save_app_state};
 use crate::views::{
-    DatabaseWorkspaceSelected, ExportSource, ZedisCommandPalette, ZedisContent, ZedisMultiSearch,
+    DatabaseWorkspaceSelected, ExportSource, SidebarToolRequested, ZedisCommandPalette, ZedisContent, ZedisMultiSearch,
     ZedisRecentKeysPalette, ZedisShortcutsOverlay, ZedisSidebar, ZedisTitleBar, confirm_dangerous_command,
     confirm_remove_server, open_account, open_compare, open_connection_diagnostics, open_features_dialog,
     open_key_export, open_key_import, open_new_group_dialog, open_settings, open_trash_dialog,
@@ -191,6 +191,9 @@ impl Zedis {
             let content = tabs[active_tab].content.read(cx);
             (content.server_state(), content.focus_handle())
         };
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.bind_content(tabs[active_tab].content.clone(), cx)
+        });
         let command_palette =
             cx.new(|cx| ZedisCommandPalette::new(server_state.clone(), page_focus.clone(), window, cx));
         let recent_keys_palette =
@@ -206,6 +209,13 @@ impl Zedis {
         .detach();
         cx.subscribe(&sidebar, |this, _, event: &DatabaseWorkspaceSelected, cx| {
             this.activate_database_workspace(event.content.clone(), event.view, cx);
+        })
+        .detach();
+        cx.subscribe_in(&sidebar, window, |this, _, event: &SidebarToolRequested, window, cx| {
+            if this.active_content() != event.content {
+                this.activate_database_workspace(event.content.clone(), ServerView::Editor, cx);
+            }
+            handlers::on_server_tool(this, &event.action, window, cx);
         })
         .detach();
         cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
@@ -341,6 +351,8 @@ impl Zedis {
             let content = self.tabs[self.active_tab].content.read(cx);
             (content.server_state(), content.focus_handle())
         };
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.bind_content(self.active_content(), cx));
         self.command_palette.update(cx, |palette, _| {
             palette.bind_to_tab(server_state.clone(), page_focus.clone());
         });

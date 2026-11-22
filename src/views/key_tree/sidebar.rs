@@ -10,6 +10,14 @@ use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 pub(crate) struct SidebarWorkspaceRequested {
     pub view: ServerView,
     pub editor_action: Option<EditorAction>,
+    pub node: SidebarNode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SidebarNode {
+    Database,
+    Folder(SharedString),
+    Key(SharedString),
 }
 impl EventEmitter<SidebarWorkspaceRequested> for ZedisKeyTree {}
 
@@ -28,6 +36,9 @@ impl Render for SidebarSearch {
 }
 
 impl ZedisKeyTree {
+    pub(crate) fn can_rename(&self, cx: &App) -> bool {
+        self.server_state.read(cx).can(Capability::RenameKey)
+    }
     /// The DB row and the standalone tree share the same filter and action menus.
     pub(crate) fn database_menu(
         tree: &Entity<Self>,
@@ -48,6 +59,7 @@ impl ZedisKeyTree {
                         cx.emit(SidebarWorkspaceRequested {
                             view: ServerView::Editor,
                             editor_action: None,
+                            node: SidebarNode::Database,
                         })
                     });
                 }),
@@ -108,9 +120,43 @@ impl ZedisKeyTree {
         self.key_tree_list_state.read(cx).delegate().items.len()
     }
 
-    pub(crate) fn render_sidebar_row(&self, index: usize, window: &mut Window, cx: &mut App) -> Option<ListItem> {
+    pub(crate) fn sidebar_node(&self, index: usize, cx: &App) -> Option<SidebarNode> {
+        let item = self.key_tree_list_state.read(cx).delegate().items.get(index)?;
+        if item.load_more_prefix.is_some() {
+            return None;
+        }
+        Some(if item.is_folder {
+            SidebarNode::Folder(item.id.clone())
+        } else {
+            SidebarNode::Key(item.id.clone())
+        })
+    }
+
+    pub(crate) fn sidebar_row_menu(
+        &self,
+        index: usize,
+        cx: &App,
+    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+        let delegate = self.key_tree_list_state.read(cx).delegate();
+        let row = delegate.menu_for(&delegate.items[index]);
+        let focus = self.sidebar_focus.clone();
+        move |menu, _, cx| {
+            row.build(
+                menu.when_some(focus.clone(), |menu, focus| menu.action_context(focus)),
+                cx,
+            )
+        }
+    }
+
+    pub(crate) fn render_sidebar_row(
+        &self,
+        index: usize,
+        selected: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<ListItem> {
         self.key_tree_list_state.update(cx, |list, cx| {
-            list.delegate_mut().sidebar = true;
+            list.delegate_mut().sidebar_selection = Some(selected);
             list.delegate_mut().render_item(IndexPath::new(index), window, cx)
         })
     }
@@ -138,6 +184,7 @@ impl ZedisKeyTree {
                 cx.emit(SidebarWorkspaceRequested {
                     view: ServerView::Editor,
                     editor_action: Some(EditorAction::Rename),
+                    node: SidebarNode::Key(key.clone()),
                 });
             }
             KeyTreeAction::WatchFolderPrefix(id) => {
@@ -147,6 +194,7 @@ impl ZedisKeyTree {
                 cx.emit(SidebarWorkspaceRequested {
                     view: ServerView::KeyspaceNotifications,
                     editor_action: None,
+                    node: SidebarNode::Folder(id.clone()),
                 });
             }
             _ => actions::on_tree_action(self, action, window, cx),

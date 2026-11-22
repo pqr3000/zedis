@@ -16,6 +16,7 @@ mod menu;
 
 pub(crate) use menu::open_new_group_dialog;
 
+use crate::views::ZedisContent;
 use crate::{
     assets::{Assets, CustomIconName},
     connection::get_servers,
@@ -52,14 +53,20 @@ use std::sync::Arc;
 use tracing::info;
 
 mod databases;
+mod header;
 mod navigation;
+mod row_actions;
+mod tools_menu;
 mod workspaces;
 use databases::DatabaseNavigation;
+#[cfg(test)]
+pub(crate) use header::SIDEBAR_MENU_ID;
+pub(crate) use header::SidebarToolRequested;
 use navigation::NavigationDelegate;
 pub(crate) use workspaces::DatabaseWorkspaceSelected;
 use workspaces::DatabaseWorkspaces;
 
-const SIDEBAR_CONTAINER_ID: &str = "sidebar-container";
+pub(crate) const SIDEBAR_CONTAINER_ID: &str = "sidebar-container";
 const SIDEBAR_LIST_ID: &str = "sidebar-redis-servers";
 const SIDEBAR_HOME_ROW_ID: &str = "sidebar-home-row";
 const SIDEBAR_HOME_ITEM_ID: &str = "sidebar-home-item";
@@ -120,6 +127,7 @@ struct SidebarServerEntry {
 pub struct ZedisSidebar {
     /// Internal state with cached server list.
     state: SidebarState,
+    active_content: Option<Entity<ZedisContent>>,
 
     databases: DatabaseNavigation,
     workspaces: DatabaseWorkspaces,
@@ -133,17 +141,6 @@ pub struct ZedisSidebar {
 
     /// Event subscriptions for reactive updates.
     _subscriptions: Vec<Subscription>,
-}
-
-/// Whether the Home control belongs to the sidebar's top band.
-#[cfg(not(target_family = "wasm"))]
-fn home_lives_in_the_sidebar() -> bool {
-    true
-}
-
-#[cfg(target_family = "wasm")]
-fn home_lives_in_the_sidebar() -> bool {
-    false
 }
 
 impl ZedisSidebar {
@@ -162,6 +159,9 @@ impl ZedisSidebar {
                 GlobalEvent::ServerSelected(server_id, _) => {
                     this.state.server_id = server_id.clone();
                     this.databases.reveal(server_id);
+                    if server_id.is_empty() {
+                        this.workspaces.focused = None;
+                    }
                 }
                 _ => {}
             }
@@ -174,6 +174,7 @@ impl ZedisSidebar {
         };
         let mut this = Self {
             state: SidebarState::default(),
+            active_content: None,
             databases: DatabaseNavigation::default(),
             workspaces: DatabaseWorkspaces::default(),
             navigation,
@@ -263,11 +264,6 @@ impl ZedisSidebar {
             .collect();
 
         let mut rows: Vec<AnyElement> = Vec::new();
-        let is_home_current = is_match_route && current_server_id.is_empty();
-        if home_lives_in_the_sidebar() {
-            rows.push(self.home_band(is_home_current, &look, window, cx));
-        }
-
         let mut monograms = if sidebar_collapsed {
             unique_monograms(
                 self.state
@@ -363,85 +359,6 @@ impl ZedisSidebar {
             .pb_2()
             .overflow_y_scrollbar()
             .children(rows)
-    }
-
-    /// Fixed-height top band aligned with the editor key bar containing Home and Collapse.
-    fn home_band(&self, is_home_current: bool, look: &ListLook, window: &mut Window, cx: &mut App) -> AnyElement {
-        let sidebar_collapsed = look.sidebar_collapsed;
-        let home_tooltip = i18n_sidebar(cx, "home");
-        let collapse_label = i18n_sidebar(cx, "collapse");
-        let mark = if cx.theme().is_dark() {
-            self.logo_light.clone()
-        } else {
-            self.logo.clone()
-        };
-        let label_color = if is_home_current { look.selected_fg } else { look.row_fg };
-
-        let home_button = sidebar_focus_button(
-            SIDEBAR_HOME_ITEM_ID,
-            home_tooltip.clone(),
-            is_home_current,
-            false,
-            look,
-            window,
-            cx,
-        )
-        .aria_selected(is_home_current)
-        .on_click(move |e: &ClickEvent, _window, cx| navigate_home(is_home_current, e.modifiers(), cx));
-
-        let home_control = if sidebar_collapsed {
-            let tip = home_tooltip.clone();
-            div().flex_1().flex().items_center().justify_center().child(
-                home_button
-                    .size_7()
-                    .justify_center()
-                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                    .child(img(mark).flex_none().size(rems(1.125))),
-            )
-        } else {
-            div().flex_1().min_w_0().flex().items_center().child(
-                home_button.w_full().h_7().px_2().justify_start().child(
-                    h_flex()
-                        .items_center()
-                        .gap_2()
-                        .w_full()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .child(img(mark).flex_none().size(rems(1.125)))
-                        .child(
-                            Label::new(SharedString::from("ZEDIS"))
-                                .text_sm()
-                                .font_semibold()
-                                .text_color(label_color)
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .flex_1()
-                                .min_w_0(),
-                        ),
-                ),
-            )
-        };
-
-        h_flex()
-            .id(SIDEBAR_HOME_ROW_ID)
-            .mx_2()
-            .h(EDITOR_KEY_BAR_HEIGHT)
-            .items_center()
-            .gap_1()
-            .child(home_control)
-            .when(!sidebar_collapsed, |this| {
-                this.child(
-                    Button::new(SIDEBAR_COLLAPSE_TOGGLE_ID)
-                        .ghost()
-                        .small()
-                        .icon(IconName::ChevronLeft)
-                        .tooltip(collapse_label)
-                        .on_click(move |_, _window, cx| toggle_sidebar_collapsed(cx)),
-                )
-            })
-            .border_b_1()
-            .border_color(look.divider_color)
-            .into_any_element()
     }
 }
 
@@ -900,7 +817,6 @@ impl Render for ZedisSidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_database_visibility(cx);
         let sidebar_collapsed = cx.global::<ZedisGlobalStore>().read(cx).sidebar_collapsed();
-        let toggle_at_the_bottom = sidebar_collapsed || !home_lives_in_the_sidebar();
         let toggle_tooltip = if sidebar_collapsed {
             i18n_sidebar(cx, "expand")
         } else {
@@ -918,6 +834,12 @@ impl Render for ZedisSidebar {
             .bg(sidebar_bg)
             .border_r_1()
             .border_color(sidebar_border)
+            .child(self.home_band(
+                cx.global::<ZedisGlobalStore>().read(cx).route() == Route::Home,
+                &list_look(cx),
+                window,
+                cx,
+            ))
             .child(
                 v_flex()
                     .flex_1()
@@ -928,7 +850,10 @@ impl Render for ZedisSidebar {
                         self.render_navigation(window, cx)
                     }),
             )
-            .when(toggle_at_the_bottom, |this| {
+            .when(!sidebar_collapsed, |sidebar| {
+                sidebar.children(self.selected_collection_tools(cx))
+            })
+            .when(sidebar_collapsed, |this| {
                 this.child(
                     h_flex()
                         .flex_none()

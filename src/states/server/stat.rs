@@ -254,6 +254,8 @@ pub struct RedisInfo {
     pub metrics: RedisMetrics,
     // --- Keyspace (db0, db1...) ---
     pub keyspace: HashMap<String, RedisKeySpaceStats>,
+    /// An empty Keyspace section confirms zero keys. Omitted INFO does not.
+    pub has_keyspace: bool,
     /// Per-replica live state from any master we polled. Populated from
     /// `INFO replication` `slave_n` lines; empty when the connection has no
     /// replicas (or when the user is connected to a replica directly).
@@ -292,6 +294,7 @@ pub fn aggregate_redis_info(infos: Vec<RedisInfo>) -> RedisInfo {
     // Concat replicas from later masters. The first master's replicas are
     // already in `total` (via the clone above) so we only walk infos[1..].
     for info in infos.iter().skip(1) {
+        total.has_keyspace &= info.has_keyspace;
         total.replicas.extend(info.replicas.iter().cloned());
     }
 
@@ -551,6 +554,9 @@ impl RedisInfo {
 
         for line in info_str.lines() {
             let line = line.trim();
+            if line.eq_ignore_ascii_case("# Keyspace") {
+                info.has_keyspace = true;
+            }
             // ignore comment line
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -559,6 +565,7 @@ impl RedisInfo {
             if let Some((key, value)) = line.split_once(':') {
                 if key.starts_with("db") && value.contains("keys=") {
                     if let Ok(stats) = parse_keyspace_value(value) {
+                        info.has_keyspace = true;
                         info.keyspace.insert(key.to_string(), stats);
                     }
                     continue;

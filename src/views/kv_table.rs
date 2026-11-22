@@ -63,7 +63,9 @@ use zedis_ui::{
 mod entry_panel;
 mod layout;
 mod operations;
+mod sidebar;
 mod toolbar;
+pub(super) use sidebar::{CollectionEditor, CollectionTools, collection_view};
 
 use entry_panel::PreviewMode;
 #[cfg(test)]
@@ -73,6 +75,11 @@ use entry_panel::{
 #[cfg(test)]
 use layout::{DATA_COLUMN_MIN_WIDTH, ENTRY_PANEL_MIN_WIDTH, PanelSplit, fit_columns};
 use layout::{TABLE_MIN_WIDTH, entry_panel_split, width_probe};
+
+pub(crate) const COLLECTION_ADD_ID: &str = "add-value-btn";
+pub(crate) const COLLECTION_FILTER_ID: &str = "kv-table-search-btn";
+pub(crate) const COLLECTION_EXPORT_ID: &str = "kv-table-export-btn";
+pub(crate) const COLLECTION_OPERATIONS_ID: &str = "kv-table-key-ops";
 
 pub const FOOTER_HEIGHT: f32 = 50.0;
 
@@ -86,6 +93,7 @@ type ZedisKvTableActionButtonFactory = Box<dyn Fn(&mut Window, &mut App) -> Vec<
 /// - Real-time updates via server events
 /// - Loading states and pagination indicators
 pub struct ZedisKvTable<T: ZedisKvFetcher> {
+    sidebar_controls: bool,
     /// Table state managing the delegate and data
     table_state: Entity<TableState<ZedisKvDelegate<T>>>,
     /// Input field state for keyword search/filter
@@ -320,9 +328,22 @@ impl<T: ZedisKvFetcher> ZedisKvTable<T> {
         }));
 
         // Initialize keyword search input field
+        let fetcher = Arc::new(Self::new_values(server_state.clone(), cx));
         let keyword_state = cx.new(|cx| InputState::new(window, cx).clean_on_escape());
         let mut placeholders = Placeholders::new(cx);
-        placeholders.add(&keyword_state, |cx| i18n_common(cx, "keyword_placeholder"), window, cx);
+        let hash_fields = fetcher.key_type() == KeyType::Hash;
+        placeholders.add(
+            &keyword_state,
+            move |cx| {
+                if hash_fields {
+                    i18n_kv_table(cx, "filter_fields")
+                } else {
+                    i18n_kv_table(cx, "filter_entries")
+                }
+            },
+            window,
+            cx,
+        );
 
         // Enter filters. Emptying the box after a filter ran — its ×,
         // Escape, or deleting to empty — shows every row again, which only
@@ -343,7 +364,6 @@ impl<T: ZedisKvFetcher> ZedisKvTable<T> {
         let mode = Self::effective_mode(KvTableMode::ALL, readonly);
 
         // Initialize table data and state
-        let fetcher = Arc::new(Self::new_values(server_state.clone(), cx));
         let done = fetcher.is_done();
         let items_count = fetcher.rows_count();
         let total_count = fetcher.count();
@@ -402,6 +422,7 @@ impl<T: ZedisKvFetcher> ZedisKvTable<T> {
         Self {
             table_state,
             keyword_state,
+            sidebar_controls: false,
             placeholders,
             applied_keyword: SharedString::default(),
             items_count,
@@ -577,7 +598,18 @@ impl<T: ZedisKvFetcher> Render for ZedisKvTable<T> {
                     .child(width_probe(self.table_width.clone(), cx.entity().downgrade(), true)),
             )
             // Footer toolbar with search and status
-            .child(self.render_footer(window, cx));
+            .child(
+                if self.sidebar_controls && !cx.global::<ZedisGlobalStore>().read(cx).sidebar_collapsed() {
+                    h_flex()
+                        .flex_none()
+                        .px_3()
+                        .py_2()
+                        .child(self.render_row_count(cx))
+                        .into_any_element()
+                } else {
+                    self.render_footer(false, window, cx).into_any_element()
+                },
+            );
 
         // With the entry panel open, split into user-resizable panes (width
         // persisted globally as `kv_edit_panel_width` — a display preference,
@@ -687,6 +719,16 @@ macro_rules! define_kv_editor {
     ($editor:ident, $values:ident) => {
         pub struct $editor {
             table_state: gpui::Entity<$crate::views::ZedisKvTable<$values>>,
+        }
+
+        impl $crate::views::kv_table::CollectionEditor for $editor {
+            fn bind_tools(
+                &mut self,
+                host: &gpui::Entity<$crate::views::kv_table::CollectionTools>,
+                cx: &mut gpui::App,
+            ) {
+                $crate::views::kv_table::CollectionTools::bind(host, &self.table_state, cx);
+            }
         }
 
         impl gpui::Render for $editor {

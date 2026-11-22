@@ -55,6 +55,8 @@ mod key_tree;
 pub(crate) use key_tree::sidebar_key_id;
 mod keyspace_notifications;
 mod kv_table;
+#[cfg(test)]
+pub(crate) use kv_table::{COLLECTION_ADD_ID, COLLECTION_EXPORT_ID, COLLECTION_FILTER_ID, COLLECTION_OPERATIONS_ID};
 mod lcs_dialog;
 mod list_editor;
 mod lua_script_library;
@@ -88,7 +90,9 @@ mod set_ismember_dialog;
 mod setting_editor;
 mod shortcuts_overlay;
 mod sidebar;
-pub(crate) use sidebar::DatabaseWorkspaceSelected;
+pub(crate) use sidebar::{DatabaseWorkspaceSelected, SidebarToolRequested};
+#[cfg(test)]
+pub(crate) use sidebar::{SIDEBAR_CONTAINER_ID, SIDEBAR_MENU_ID};
 mod slowlog_editor;
 mod status_bar;
 mod stream_editor;

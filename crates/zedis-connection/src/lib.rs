@@ -58,6 +58,7 @@ mod compare;
 mod config;
 mod conn;
 mod danger;
+mod database_counts;
 mod diagnosis;
 mod dump_restore;
 mod entry_check;
@@ -169,6 +170,7 @@ pub use danger::{
     ConfirmStrictness, DangerKind, WRITE_UNLOCK_SECS, classify_dangerous, classify_dangerous_line,
     classify_guarded_script, confirm_strictness, is_write_command, requires_write_confirm,
 };
+pub use database_counts::database_key_counts;
 pub use diagnosis::{DiagHint, DiagOutcome, DiagReportRow, DiagStage, DiagStatus, diag_stages};
 #[cfg(not(target_family = "wasm"))]
 pub use diagnostics::run_diagnostics;

@@ -26,9 +26,12 @@ use crate::{
         ConnectionErrorKind, GlobalEvent, KeyType, NotificationAction, RedisStreamEntry, RedisValue, ServerEvent,
         ZedisGlobalStore, ZedisServerState, i18n_kv_table, i18n_status_bar, i18n_stream_editor, project_stream_entries,
     },
-    views::{ZedisKvTable, kv_table::FOOTER_HEIGHT},
+    views::{
+        ZedisKvTable,
+        kv_table::{CollectionEditor, CollectionTools, FOOTER_HEIGHT},
+    },
 };
-use gpui::{App, Entity, SharedString, Subscription, Task, Window, div, prelude::*, px};
+use gpui::{App, Entity, SharedString, Subscription, Task, WeakEntity, Window, div, prelude::*, px};
 use gpui_kit::component::{
     ActiveTheme, IconName, Selectable, Sizable,
     button::Button,
@@ -317,6 +320,7 @@ impl ZedisKvFetcher for ZedisStreamValues {
 // ─── Stream editor ───────────────────────────────────────────────────────────
 
 pub struct ZedisStreamEditor {
+    sidebar_tools: Option<WeakEntity<CollectionTools>>,
     table_state: Entity<ZedisKvTable<ZedisStreamValues>>,
     server_state: Entity<ZedisServerState>,
     /// Whether the auxiliary info view (XINFO) is currently shown.
@@ -448,6 +452,7 @@ impl ZedisStreamEditor {
                 let mut actions = vec![
                     Button::new("info-view-btn")
                         .icon(icon)
+                        .accessibility_label(tooltip.clone())
                         .tooltip(tooltip)
                         .on_click(move |_, _, cx| {
                             if let Some(editor) = weak_click.upgrade() {
@@ -462,6 +467,7 @@ impl ZedisStreamEditor {
                         }),
                     Button::new("stream-tail-btn")
                         .icon(tail_icon)
+                        .accessibility_label(tail_tooltip.clone())
                         .tooltip(tail_tooltip)
                         .on_click(move |_, _, cx| {
                             if let Some(editor) = weak_tail.upgrade() {
@@ -476,6 +482,7 @@ impl ZedisStreamEditor {
                             .outline()
                             .selected(has_group_mode)
                             .icon(IconName::Settings2)
+                            .accessibility_label(i18n_stream_editor(cx, "tail_mode_group"))
                             .tooltip(i18n_stream_editor(cx, "tail_mode_group"))
                             .on_click(move |_, window, cx| {
                                 if let Some(editor) = weak_mode.upgrade() {
@@ -544,6 +551,7 @@ impl ZedisStreamEditor {
         Self {
             table_state,
             server_state,
+            sidebar_tools: None,
             is_info_view: false,
             groups_consumers_table: None,
             pending_filter_input,
@@ -556,9 +564,22 @@ impl ZedisStreamEditor {
     }
 }
 
+impl CollectionEditor for ZedisStreamEditor {
+    fn bind_tools(&mut self, host: &Entity<CollectionTools>, _cx: &mut App) {
+        self.sidebar_tools = Some(host.downgrade());
+    }
+}
+
 impl Render for ZedisStreamEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_info = self.is_info_view;
+        if let Some(host) = self.sidebar_tools.as_ref().and_then(WeakEntity::upgrade) {
+            if is_info {
+                CollectionTools::clear(&host, cx);
+            } else {
+                CollectionTools::bind(&host, &self.table_state, cx);
+            }
+        }
 
         v_flex()
             .size_full()
@@ -568,6 +589,7 @@ impl Render for ZedisStreamEditor {
                         h_flex().flex_none().h(px(FOOTER_HEIGHT)).px_3().gap_2().child(
                             Button::new("info-view-btn")
                                 .icon(IconName::LayoutDashboard)
+                                .accessibility_label(i18n_kv_table(cx, "data_tooltip"))
                                 .tooltip(i18n_kv_table(cx, "data_tooltip"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.is_info_view = false;

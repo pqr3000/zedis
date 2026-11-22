@@ -205,6 +205,7 @@ impl ZedisSetEditor {
                     Button::new("set-ismember-btn")
                         .ghost()
                         .icon(CustomIconName::ListCheck)
+                        .accessibility_label(i18n_set_editor(cx, "check_members_tooltip"))
                         .tooltip(i18n_set_editor(cx, "check_members_tooltip"))
                         .on_click(move |_, window, cx| {
                             open_set_ismember_dialog(state_for_click.clone(), window, cx);

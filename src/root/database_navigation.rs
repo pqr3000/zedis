@@ -121,9 +121,14 @@ impl Zedis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::states::{KeyType, QueryMode, RedisBytesValue, RedisValue, RedisValueData, Route, ServerEvent};
+    use crate::states::{
+        KeyType, KvElement, QueryMode, RedisBytesValue, RedisHashValue, RedisValue, RedisValueData, Route, ServerEvent,
+    };
     use crate::test_support::init_ui;
-    use crate::views::sidebar_key_id;
+    use crate::views::{
+        COLLECTION_ADD_ID, COLLECTION_EXPORT_ID, COLLECTION_FILTER_ID, COLLECTION_OPERATIONS_ID, SIDEBAR_CONTAINER_ID,
+        SIDEBAR_MENU_ID, sidebar_key_id,
+    };
     use gpui::{AnyWindowHandle, Role, TestAppContext, px, size};
     use gpui_kit::component::{IndexPath, Root, WindowExt};
     use gpui_kit::test::{TestQueryExt, TestWindowExt};
@@ -156,6 +161,132 @@ mod tests {
             cx.notify();
         });
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn sidebar_actions_follow_the_selected_database_folder_and_collection_key(cx: &mut TestAppContext) {
+        let (handle, root) = open_root(cx);
+        cx.run_until_parked();
+        let sidebar = root.read_with(cx, |root, _| root.sidebar.clone());
+        sidebar.update(cx, |sidebar, cx| sidebar.set_databases_for_test("tree-test", 2, cx));
+        for db in [0, 1] {
+            cx.update_window(handle, |_, window, cx| {
+                window.click(SharedString::from(format!("sidebar-db-toggle-tree-test-{db}")), cx);
+            })
+            .expect("window");
+            cx.run_until_parked();
+        }
+        let (first, folder) = sidebar.read_with(cx, |sidebar, cx| {
+            let workspace = |db| sidebar.cached_database_workspace("tree-test", db).expect("expanded DB");
+            (
+                workspace(0),
+                workspace(1).read(cx).database_tree().expect("folder tree"),
+            )
+        });
+        let tree = first.read_with(cx, |content, _| content.database_tree().expect("key tree"));
+        tree.update(cx, |tree, cx| tree.set_rows_for_test(&["settings"], cx));
+        folder.update(cx, |tree, cx| tree.set_folder_for_test(cx));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("sidebar-db-tree-test-1-search", cx);
+        })
+        .expect("database has search");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert!(window.has_active_dialog(cx));
+            window.close_all_dialogs(cx);
+            window
+                .within(sidebar_key_id("tree-test", 0, "settings"))
+                .click(IndexPath::new(0), cx);
+        })
+        .expect("window");
+        cx.run_until_parked();
+        let state = first.read_with(cx, |content, _| content.server_state());
+        state.update(cx, |state, cx| {
+            state.show_value_for_test(RedisValue {
+                key_type: KeyType::Hash,
+                data: Some(RedisValueData::Hash(Arc::new(RedisHashValue {
+                    size: 1,
+                    done: true,
+                    values: vec![(KvElement::from_text("theme"), KvElement::from_text("dark"))],
+                    ..Default::default()
+                }))),
+                ..Default::default()
+            });
+            cx.emit(ServerEvent::ValueLoaded);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let edge = window.find(SIDEBAR_CONTAINER_ID).bounds().right();
+            for control in [
+                "sidebar-key-tree-test-0-settings-rename",
+                COLLECTION_ADD_ID,
+                COLLECTION_FILTER_ID,
+                COLLECTION_EXPORT_ID,
+                COLLECTION_OPERATIONS_ID,
+            ] {
+                let button = window.find(control);
+                assert!(
+                    button.visible() && button.bounds().right() <= edge,
+                    "{control} belongs in the sidebar"
+                );
+            }
+            window.click(COLLECTION_OPERATIONS_ID, cx);
+        })
+        .expect("window");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.within("popup-menu").click(0usize, cx))
+            .expect("hash operations");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.has_active_dialog(cx),
+                "the sidebar command reached the hash table"
+            );
+            window.close_all_dialogs(cx);
+        })
+        .expect("window");
+        cx.run_until_parked();
+        let folder_id = folder.read_with(cx, |tree, cx| tree.sidebar_row_id("tree-test", 1, 0, cx));
+        cx.update_window(handle, |_, window, cx| {
+            window.within(folder_id.clone()).click(IndexPath::new(0), cx)
+        })
+        .expect("folder");
+        cx.run_until_parked();
+        folder.update(cx, |tree, cx| tree.set_folder_for_test(cx));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find(COLLECTION_ADD_ID).is_none(),
+                "browsing a folder hides the field tools"
+            );
+            window.click(SharedString::from(format!("{folder_id}-copy")), cx);
+        })
+        .expect("folder action");
+        assert!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .is_some_and(|text| text.starts_with("branch"))
+        );
+        assert_eq!(
+            root.read_with(cx, |root, _| root.active_content()),
+            first,
+            "folder browsing retains the editor"
+        );
+        cx.update_window(handle, |_, window, cx| window.click(SIDEBAR_MENU_ID, cx))
+            .expect("tools for selected DB");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.within("popup-menu").click(4usize, cx))
+            .expect("server capabilities");
+        cx.run_until_parked();
+        root.read_with(cx, |root, cx| {
+            assert_eq!(root.active_content().read(cx).server_state().read(cx).db(), 1)
+        });
     }
 
     #[gpui::test]
