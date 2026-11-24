@@ -2,10 +2,6 @@ name: "Publish"
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
-  schedule:
-    # Daily nightly at 18:00 UTC (02:00 Beijing). Skipped when main has no
-    # new commits since the last nightly — see the gate in prepare_vars.
-    - cron: "0 18 * * *"
   # Manual nightly (always builds, even without new commits). The
   # `signpath_policy` input runs the Windows code-signing steps against
   # SignPath's self-signed test certificate — no approval needed — to exercise
