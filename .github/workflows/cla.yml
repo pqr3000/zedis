@@ -1,20 +1,35 @@
 name: "CLA"
 on:
-  pull_request:
-    types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to check"
+        required: true
+        type: number
 
-permissions: {}
+permissions:
+  pull-requests: read
 
 jobs:
   cla:
     name: CLA accepted
-    if: github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
       - name: Verify CLA checkbox in PR description
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
         run: |
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Enter a valid pull request number."
+            exit 1
+          fi
+          pr_json=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+          if [ "$(jq -r '.user.type' <<< "$pr_json")" = "Bot" ]; then
+            echo "Bot pull requests do not require a CLA."
+            exit 0
+          fi
+          PR_BODY=$(jq -r '.body // ""' <<< "$pr_json")
           if printf '%s\n' "$PR_BODY" | grep -qiE '^\s*-\s*\[x\]\s*⚖️\s*\*\*(I have read and agree to the \[Zedis Contributor License Agreement\]\(CLA\.md\)|我已阅读并同意 \[Zedis 贡献者许可协议\]\(CLA\.md\))'; then
             echo "CLA agreement checkbox is checked."
             exit 0

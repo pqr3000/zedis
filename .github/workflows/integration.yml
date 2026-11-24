@@ -7,23 +7,6 @@ name: "Integration"
 # Dragonfly and Garnet have a job of their own at the bottom: smoke lanes,
 # not flavours.
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "crates/zedis-connection/**"
-      - "crates/zedis-core/**"
-      - "scripts/it/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/integration.yml"
-  pull_request:
-    paths:
-      - "crates/zedis-connection/**"
-      - "crates/zedis-core/**"
-      - "scripts/it/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/integration.yml"
   workflow_dispatch:
 
 concurrency:

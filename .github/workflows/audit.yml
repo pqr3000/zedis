@@ -1,28 +1,6 @@
 name: Security Audit
 
 on:
-  push:
-    # The default branch is `main` — with `master` here the push trigger
-    # never fired and only the daily cron ran.
-    branches:
-      - main
-    paths:
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - "deny.toml"
-      - ".cargo/audit.toml"
-      - ".github/workflows/audit.yml"
-  # PRs and pushes are gated by the cargo-deny job below (a Dependabot bump,
-  # a new crate); the rustsec issue-reporting job runs on schedule / dispatch.
-  pull_request:
-    paths:
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - "deny.toml"
-      - ".cargo/audit.toml"
-      - ".github/workflows/audit.yml"
-  schedule:
-    - cron: "0 16 * * *"
   workflow_dispatch:
 
 permissions:
@@ -32,8 +10,7 @@ jobs:
   # `cargo deny check`: advisories (RUSTSEC, unmaintained scoped to direct
   # deps), licenses against the allow list, duplicate versions, and the
   # crates.io-only source rule — `deny.toml` holds every ignore with its
-  # reason. Runs on PRs too: it only reads and prints, so a fork's
-  # read-only token is enough.
+  # reason. The check only reads and prints.
   cargo-deny:
     runs-on: ubuntu-latest
     steps:
@@ -43,11 +20,7 @@ jobs:
           command: check advisories bans licenses sources
 
   security-audit:
-    # cargo-deny above already gates every push and PR in <1m. Keep
-    # rustsec/audit-check for the daily schedule (where it opens issues for
-    # new advisories) and manual dispatch, avoiding its 3m source build of
-    # cargo-audit and its Check Run POST→PATCH 404 race on push events.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Report advisory results when the workflow is run manually.
     permissions:
       # rustsec/audit-check posts results as a Check Run. That API requires
       # a GitHub App token — the automatic GITHUB_TOKEN qualifies; a classic

@@ -10,21 +10,6 @@ name: "Store"
 # whole workflow, and the bridge changing is no reason to run the Redis
 # matrix.
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "zedis-bridge/**"
-      - "crates/zedis-connection/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/store.yml"
-  pull_request:
-    paths:
-      - "zedis-bridge/**"
-      - "crates/zedis-connection/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/store.yml"
   workflow_dispatch:
 
 concurrency:

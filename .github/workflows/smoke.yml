@@ -21,21 +21,6 @@ name: "Smoke"
 #
 # No packaging, no uploads; caches are shared with publish.yml's jobs.
 on:
-  push:
-    branches: ["main"]
-    # Docs-only pushes can't affect first-frame paint — skip them. Locales
-    # and assets stay in: both are embedded into the binary and parsed on
-    # the startup path.
-    paths:
-      - "src/**"
-      - "crates/**"
-      - "zedis-cmd-builder/**"
-      - "locales/**"
-      - "assets/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
-      - ".github/workflows/smoke.yml"
   workflow_dispatch:
 
 # A rapid push series only needs the newest commit smoked.

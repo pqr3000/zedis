@@ -1,8 +1,6 @@
 name: "Publish"
 on:
-  push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
-  # Manual nightly (always builds, even without new commits). The
+  # Run manually on main for a nightly or on a version tag for a release. The
   # `signpath_policy` input runs the Windows code-signing steps against
   # SignPath's self-signed test certificate — no approval needed — to exercise
   # the pipeline end to end; tag pushes always sign with release-signing (see

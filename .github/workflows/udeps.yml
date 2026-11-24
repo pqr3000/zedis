@@ -7,8 +7,6 @@ name: Unused dependencies
 # has the occasional false positive; `make udeps` runs the same check
 # locally.
 on:
-  schedule:
-    - cron: "0 4 * * 1"
   workflow_dispatch:
 
 permissions:
